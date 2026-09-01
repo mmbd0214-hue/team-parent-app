@@ -23,3 +23,5 @@ textarea{width:100%;border:1px solid #dce1dc;border-radius:12px;padding:10px}.me
 
 #practiceAttendBox,#gameAttendNoteBox{margin-top:12px}
 #gameAttendNoteBox textarea{width:100%}
+
+.friendshipCard{text-align:center}.friendshipCard h3{margin-top:0}.friendshipCard .line-btn,.friendshipCard .secondary{max-width:none}.friendshipError{margin-top:14px;padding:11px 12px;border-radius:12px;background:#fdebea;color:#9a332d;font-size:14px;text-align:left}

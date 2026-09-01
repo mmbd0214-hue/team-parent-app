@@ -3,10 +3,80 @@ let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:fa
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
 async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
-function showOnly(id){["loading","login","binding","app"].forEach(x=>$(x).classList.toggle("hidden",x!==id))}
+function showOnly(id){["loading","login","friendship","binding","app"].forEach(x=>$(x).classList.toggle("hidden",x!==id))}
 async function finishLogin(accessToken){const r=await api("/api/auth/line",{method:"POST",body:JSON.stringify({access_token:accessToken})});token=r.token;localStorage.setItem("teamToken",token);await loadApp()}
-async function start(){try{config=await api("/api/config");if(config.mock_login)$("mockLogin").classList.remove("hidden");if(token){try{await loadApp();return}catch{localStorage.removeItem("teamToken");token=""}}if(!config.liff_id){showOnly("login");return}await liff.init({liffId:config.liff_id});if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}await finishLogin(liff.getAccessToken())}catch(e){$("loadingText").textContent=e.message;showOnly("login")}}
-$("lineLogin").onclick=async()=>{try{if(!config.liff_id)return toast("尚未設定 LINE_LIFF_ID");await liff.init({liffId:config.liff_id});if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}await finishLogin(liff.getAccessToken())}catch(e){toast(e.message)}};
+async function ensureLineFriendship(){
+  if(config.mock_login && (!config.liff_id || typeof liff==="undefined")) return true;
+  if(!config.liff_id || typeof liff==="undefined") return true;
+
+  try{
+    const friendship=await liff.getFriendship();
+    if(friendship && friendship.friendFlag){
+      $("friendshipError").classList.add("hidden");
+      return true;
+    }
+    showOnly("friendship");
+    return false;
+  }catch(e){
+    console.error("getFriendship failed:",e);
+    $("friendshipError").textContent="無法確認好友狀態。請確認 LINE Login Channel 已連結『青山社區棒球隊小幫手』。";
+    $("friendshipError").classList.remove("hidden");
+    showOnly("friendship");
+    return false;
+  }
+}
+
+async function continueAfterFriendCheck(){
+  const ok=await ensureLineFriendship();
+  if(!ok)return;
+  await loadApp();
+}
+
+async function start(){
+  try{
+    config=await api("/api/config");
+    if(config.mock_login) $("mockLogin").classList.remove("hidden");
+
+    if(config.liff_id && typeof liff!=="undefined"){
+      $("loadingText").textContent="正在啟動 LINE...";
+      await liff.init({liffId:config.liff_id});
+      if(!liff.isLoggedIn()){
+        liff.login({redirectUri:location.href});
+        return;
+      }
+      const accessToken=liff.getAccessToken();
+      if(!accessToken) throw new Error("無法取得 LINE access token");
+      const r=await api("/api/auth/line",{method:"POST",body:JSON.stringify({access_token:accessToken})});
+      token=r.token;
+      localStorage.setItem("teamToken",token);
+      await continueAfterFriendCheck();
+      return;
+    }
+
+    if(token){
+      try{await loadApp();return}catch{localStorage.removeItem("teamToken");token=""}
+    }
+    showOnly("login");
+  }catch(e){
+    console.error(e);
+    $("loadingText").textContent=e.message||"LINE 初始化失敗";
+    showOnly("login");
+  }
+}
+
+$("lineLogin").onclick=async()=>{
+  try{
+    if(!config.liff_id)return toast("尚未設定 LINE_LIFF_ID");
+    await liff.init({liffId:config.liff_id});
+    if(!liff.isLoggedIn()){liff.login({redirectUri:location.href});return}
+    const accessToken=liff.getAccessToken();
+    if(!accessToken)throw new Error("無法取得 LINE access token");
+    const r=await api("/api/auth/line",{method:"POST",body:JSON.stringify({access_token:accessToken})});
+    token=r.token;
+    localStorage.setItem("teamToken",token);
+    await continueAfterFriendCheck();
+  }catch(e){toast("LINE 登入失敗："+e.message)}
+};
 $("mockLogin").onclick=()=>finishLogin("mock").catch(e=>toast(e.message));$("retryBinding").onclick=()=>loadApp().catch(e=>toast(e.message));
 
 async function loadApp(){const me=await api("/api/me");state.parent=me.parent;state.players=me.players;if(me.needs_binding||!state.players.length){$("bindingHello").textContent=`${state.parent.display_name}，登入成功`;showOnly("binding");return}state.playerId=state.playerId||state.players[0].id;$("hello").textContent=`${state.parent.display_name}，你好`;$("parentName").textContent=state.parent.display_name;$("childrenCount").textContent=`${state.players.length} 位`;$("playerSelect").innerHTML=state.players.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");$("playerSelect").value=state.playerId;$("playerSelect").onchange=async e=>{state.playerId=Number(e.target.value);await refresh()};state.events=await api("/api/events");showOnly("app");await refresh();const eventId=Number(new URLSearchParams(location.search).get("event"));if(eventId&&state.events.find(x=>Number(x.id)===eventId)){setTimeout(()=>openEvent(eventId),250)}}
@@ -143,5 +213,40 @@ document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>{document.q
 
 const extraPreviewBtn=$("extraPreviewBindBtn");
 if(extraPreviewBtn)extraPreviewBtn.onclick=previewExtraBinding;
+
+
+const requestFriendBtn=$("requestFriendBtn");
+if(requestFriendBtn){
+  requestFriendBtn.onclick=async()=>{
+    try{
+      $("friendshipError").classList.add("hidden");
+      if(typeof liff==="undefined" || !config.liff_id) throw new Error("LIFF 尚未初始化");
+      if(typeof liff.isApiAvailable==="function" && !liff.isApiAvailable("requestFriendship")) throw new Error("目前環境不支援加入好友功能");
+      await liff.requestFriendship();
+      const friendship=await liff.getFriendship();
+      if(friendship && friendship.friendFlag){
+        toast("已加入青山社區棒球隊小幫手");
+        await loadApp();
+      }else{
+        $("friendshipError").textContent="目前仍未偵測到好友狀態，請完成加入後再按『重新檢查』。";
+        $("friendshipError").classList.remove("hidden");
+      }
+    }catch(e){
+      console.error("requestFriendship failed:",e);
+      $("friendshipError").textContent="加入好友沒有完成："+(e.message||"請稍後再試");
+      $("friendshipError").classList.remove("hidden");
+    }
+  };
+}
+
+const recheckFriendBtn=$("recheckFriendBtn");
+if(recheckFriendBtn){
+  recheckFriendBtn.onclick=async()=>{
+    try{
+      const ok=await ensureLineFriendship();
+      if(ok){toast("好友狀態確認完成");await loadApp()}
+    }catch(e){toast(e.message)}
+  };
+}
 
 start();
