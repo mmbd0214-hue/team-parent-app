@@ -100,6 +100,19 @@ def init_db():
 
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'practice'")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS response_deadline DATE")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS meet_time TIME")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS meet_time_tbd BOOLEAN NOT NULL DEFAULT FALSE")
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS event_matches (
+                id BIGSERIAL PRIMARY KEY,
+                event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                match_order INTEGER NOT NULL DEFAULT 1,
+                game_time TIME,
+                game_time_tbd BOOLEAN NOT NULL DEFAULT FALSE,
+                opponent TEXT NOT NULL DEFAULT ''
+            )
+            """)
 
             cur.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_players_bind_code
@@ -379,39 +392,32 @@ def me(authorization: str | None = Header(default=None)):
 @app.get("/api/events")
 def parent_events(authorization: str | None = Header(default=None)):
     p = current_parent(authorization)
-
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT DISTINCT
-                    e.id,
-                    e.title,
-                    e.event_date,
-                    e.location,
-                    e.meal_price,
-                    e.status,
-                    e.event_type,
-                    e.response_deadline
+                SELECT e.id,e.title,e.event_date,e.location,e.meal_price,
+                       e.status,e.event_type,e.response_deadline,e.meet_time,e.meet_time_tbd
                 FROM events e
-                JOIN event_players ep ON ep.event_id=e.id
-                JOIN parent_players pp ON pp.player_id=ep.player_id
-                WHERE pp.parent_id=%s
+                WHERE e.id IN (
+                    SELECT ep.event_id
+                    FROM event_players ep
+                    JOIN parent_players pp ON pp.player_id=ep.player_id
+                    WHERE pp.parent_id=%s
+                )
                   AND e.event_date >= %s
-                ORDER BY e.event_date
+                ORDER BY e.event_date,e.id
             """, (p["id"], date.today()))
-
             rows = cur.fetchall()
-
-    return [
-        {
-            **row,
-            "event_date": row["event_date"].isoformat()
-                if row["event_date"] else None,
-            "response_deadline": row["response_deadline"].isoformat()
-                if row["response_deadline"] else None,
-        }
-        for row in rows
-    ]
+            result=[]
+            for row in rows:
+                result.append({
+                    **row,
+                    "event_date": row["event_date"].isoformat() if row["event_date"] else None,
+                    "response_deadline": row["response_deadline"].isoformat() if row["response_deadline"] else None,
+                    "meet_time": normalize_time_value(row.get("meet_time")),
+                    "matches": fetch_event_matches(cur,row["id"]),
+                })
+            return result
 
 
 @app.get("/api/players/{player_id}/attendance")
@@ -564,6 +570,12 @@ class BindIn(BaseModel):
     player_id: int
 
 
+class MatchIn(BaseModel):
+    game_time: str | None = None
+    game_time_tbd: bool = False
+    opponent: str = ""
+
+
 class EventIn(BaseModel):
     title: str
     event_date: str
@@ -571,6 +583,9 @@ class EventIn(BaseModel):
     meal_price: int = 0
     event_type: str = "practice"
     response_deadline: str | None = None
+    meet_time: str | None = None
+    meet_time_tbd: bool = False
+    matches: list[MatchIn] = []
     player_ids: list[int] = []
 
 
@@ -746,23 +761,17 @@ def reset_bind_code(player_id: int, authorization: str | None = Header(default=N
 @app.get("/api/admin/parents")
 def admin_parents(authorization: str | None = Header(default=None)):
     require_admin(authorization)
-
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT pa.*,
-                  COALESCE(
-                    json_agg(
-                      json_build_object('id',p.id,'name',p.name,'team',p.team)
-                    )
-                    FILTER (WHERE p.id IS NOT NULL),
-                    '[]'
-                  ) players
+                SELECT pa.id,pa.line_user_id,pa.display_name,pa.picture_url,pa.phone,pa.is_primary,pa.last_login_at,
+                       COALESCE((
+                           SELECT json_agg(json_build_object('id',p.id,'name',p.name,'team',p.team,'number',p.number) ORDER BY p.team,p.name)
+                           FROM parent_players pp JOIN players p ON p.id=pp.player_id
+                           WHERE pp.parent_id=pa.id
+                       ), '[]'::json) AS players
                 FROM parents pa
-                LEFT JOIN parent_players pp ON pp.parent_id=pa.id
-                LEFT JOIN players p ON p.id=pp.player_id
-                GROUP BY pa.id
-                ORDER BY CASE WHEN COUNT(p.id)=0 THEN 0 ELSE 1 END,pa.display_name
+                ORDER BY pa.display_name
             """)
             return cur.fetchall()
 
@@ -826,129 +835,157 @@ def admin_unbind(
     return {"ok": True}
 
 
+def normalize_time_value(value):
+    if value is None:
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%H:%M")
+    text = str(value)
+    return text[:5] if len(text) >= 5 else text
+
+
+def fetch_event_matches(cur, event_id):
+    cur.execute("""
+        SELECT id,event_id,match_order,game_time,game_time_tbd,opponent
+        FROM event_matches
+        WHERE event_id=%s
+        ORDER BY match_order,id
+    """, (event_id,))
+    rows = cur.fetchall()
+    for row in rows:
+        row["game_time"] = normalize_time_value(row.get("game_time"))
+    return rows
+
+
+@app.delete("/api/admin/players/{player_id}")
+def delete_player(player_id: int, authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,name,team FROM players WHERE id=%s",(player_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"找不到球員")
+            cur.execute("DELETE FROM players WHERE id=%s",(player_id,))
+        conn.commit()
+    return {"ok":True,"deleted":row}
+
+
+@app.delete("/api/admin/parents/{parent_id}")
+def delete_parent(parent_id: int, authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,display_name,line_user_id FROM parents WHERE id=%s",(parent_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"找不到家長")
+            cur.execute("DELETE FROM parents WHERE id=%s",(parent_id,))
+        conn.commit()
+    return {"ok":True,"deleted":row}
+
+
+@app.delete("/api/admin/events/{event_id}")
+def delete_event(event_id: int, authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,title,event_date::text FROM events WHERE id=%s",(event_id,))
+            row=cur.fetchone()
+            if not row: raise HTTPException(404,"找不到活動")
+            cur.execute("DELETE FROM events WHERE id=%s",(event_id,))
+        conn.commit()
+    return {"ok":True,"deleted":row}
+
+
 # ---------------- Admin events ----------------
 
 @app.get("/api/admin/events")
 def admin_events(authorization: str | None = Header(default=None)):
     require_admin(authorization)
-
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,
-                       e.status,e.event_type,e.response_deadline::text,
-                       COUNT(ep.player_id) invited,
-                       COUNT(a.id) replied,
+                SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,e.status,e.event_type,
+                       e.response_deadline::text,e.meet_time,e.meet_time_tbd,
+                       COUNT(ep.player_id) invited,COUNT(a.id) replied,
                        COALESCE(SUM(CASE WHEN a.attendance_status='attend' THEN 1 ELSE 0 END),0) attend,
                        COALESCE(SUM(CASE WHEN a.attendance_status='leave' THEN 1 ELSE 0 END),0) leave,
                        COALESCE(SUM(CASE WHEN a.attendance_status='maybe' THEN 1 ELSE 0 END),0) maybe,
-                       COALESCE(SUM(COALESCE(a.player_meals,0)+COALESCE(a.parent_meals,0)),0) meals
+                       COALESCE(SUM(COALESCE(a.player_meals,0)+COALESCE(a.parent_meals,0)),0) meals,
+                       (SELECT COUNT(*) FROM event_matches em WHERE em.event_id=e.id) match_count
                 FROM events e
                 LEFT JOIN event_players ep ON ep.event_id=e.id
                 LEFT JOIN attendance a ON a.event_id=e.id AND a.player_id=ep.player_id
                 GROUP BY e.id
                 ORDER BY e.event_date DESC,e.id DESC
             """)
-            return cur.fetchall()
+            rows=cur.fetchall()
+            for row in rows:
+                row["meet_time"]=normalize_time_value(row.get("meet_time"))
+            return rows
 
 
 @app.post("/api/admin/events")
 def create_event(body: EventIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
-
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO events(
-                    title,event_date,location,meal_price,event_type,response_deadline
-                )
-                VALUES(%s,%s,%s,%s,%s,%s)
-                RETURNING *
-            """, (
-                body.title.strip(),body.event_date,body.location.strip(),
-                body.meal_price,body.event_type,body.response_deadline or None
-            ))
-            event = cur.fetchone()
-
+                INSERT INTO events(title,event_date,location,meal_price,event_type,response_deadline,meet_time,meet_time_tbd)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,body.response_deadline or None,
+                  None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd))
+            event=cur.fetchone()
             if body.player_ids:
-                cur.executemany("""
-                    INSERT INTO event_players(event_id,player_id)
-                    VALUES(%s,%s)
-                    ON CONFLICT DO NOTHING
-                """, [(event["id"], pid) for pid in body.player_ids])
-
+                cur.executemany("INSERT INTO event_players(event_id,player_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",[(event["id"],pid) for pid in body.player_ids])
+            for idx,m in enumerate(body.matches,start=1):
+                cur.execute("INSERT INTO event_matches(event_id,match_order,game_time,game_time_tbd,opponent) VALUES(%s,%s,%s,%s,%s)",
+                            (event["id"],idx,None if m.game_time_tbd else (m.game_time or None),m.game_time_tbd,m.opponent.strip()))
         conn.commit()
-
     return event
 
 
 @app.put("/api/admin/events/{event_id}")
 def update_event(event_id: int, body: EventUpdateIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
-
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE events
-                SET title=%s,event_date=%s,location=%s,meal_price=%s,
-                    event_type=%s,response_deadline=%s,status=%s
-                WHERE id=%s
-                RETURNING *
-            """, (
-                body.title.strip(),body.event_date,body.location.strip(),
-                body.meal_price,body.event_type,body.response_deadline or None,
-                body.status,event_id
-            ))
-            event = cur.fetchone()
-
-            if not event:
-                raise HTTPException(404, "找不到活動")
-
-            cur.execute("DELETE FROM event_players WHERE event_id=%s", (event_id,))
-
+                UPDATE events SET title=%s,event_date=%s,location=%s,meal_price=%s,event_type=%s,response_deadline=%s,status=%s,meet_time=%s,meet_time_tbd=%s
+                WHERE id=%s RETURNING *
+            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,body.response_deadline or None,body.status,
+                  None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd,event_id))
+            event=cur.fetchone()
+            if not event: raise HTTPException(404,"找不到活動")
+            cur.execute("DELETE FROM event_players WHERE event_id=%s",(event_id,))
             if body.player_ids:
-                cur.executemany("""
-                    INSERT INTO event_players(event_id,player_id)
-                    VALUES(%s,%s)
-                """, [(event_id, pid) for pid in body.player_ids])
-
+                cur.executemany("INSERT INTO event_players(event_id,player_id) VALUES(%s,%s)",[(event_id,pid) for pid in body.player_ids])
+            cur.execute("DELETE FROM event_matches WHERE event_id=%s",(event_id,))
+            for idx,m in enumerate(body.matches,start=1):
+                cur.execute("INSERT INTO event_matches(event_id,match_order,game_time,game_time_tbd,opponent) VALUES(%s,%s,%s,%s,%s)",
+                            (event_id,idx,None if m.game_time_tbd else (m.game_time or None),m.game_time_tbd,m.opponent.strip()))
         conn.commit()
-
     return event
 
 
 @app.get("/api/admin/events/{event_id}")
 def admin_event_detail(event_id: int, authorization: str | None = Header(default=None)):
     require_admin(authorization)
-
     with db() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT id,title,event_date::text,location,meal_price,status,event_type,response_deadline::text,meet_time,meet_time_tbd FROM events WHERE id=%s",(event_id,))
+            event=cur.fetchone()
+            if not event: raise HTTPException(404,"找不到活動")
+            event["meet_time"]=normalize_time_value(event.get("meet_time"))
             cur.execute("""
-                SELECT id,title,event_date::text,location,meal_price,status,
-                       event_type,response_deadline::text
-                FROM events
-                WHERE id=%s
-            """, (event_id,))
-            event = cur.fetchone()
-
-            if not event:
-                raise HTTPException(404, "找不到活動")
-
-            cur.execute("""
-                SELECT p.id,p.name,p.team,p.number,
-                       a.attendance_status,a.leave_reason,
-                       COALESCE(a.player_meals,0) player_meals,
-                       COALESCE(a.parent_meals,0) parent_meals
-                FROM event_players ep
-                JOIN players p ON p.id=ep.player_id
-                LEFT JOIN attendance a
-                  ON a.event_id=ep.event_id AND a.player_id=ep.player_id
-                WHERE ep.event_id=%s
-                ORDER BY p.team,p.name
-            """, (event_id,))
-            players = cur.fetchall()
-
-    return {"event": event, "players": players}
+                SELECT p.id,p.name,p.team,p.number,a.attendance_status,a.leave_reason,
+                       COALESCE(a.player_meals,0) player_meals,COALESCE(a.parent_meals,0) parent_meals
+                FROM event_players ep JOIN players p ON p.id=ep.player_id
+                LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id
+                WHERE ep.event_id=%s ORDER BY p.team,p.name
+            """,(event_id,))
+            players=cur.fetchall()
+            matches=fetch_event_matches(cur,event_id)
+    return {"event":event,"players":players,"matches":matches}
 
 
 # ---------------- Admin payments ----------------
@@ -1021,124 +1058,6 @@ def update_payment_status(
     return row
 
 
-@app.delete("/api/admin/players/{player_id}")
-def delete_player(
-    player_id: int,
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id,name,team
-                FROM players
-                WHERE id=%s
-            """, (player_id,))
-            player = cur.fetchone()
-
-            if not player:
-                raise HTTPException(404, "找不到球員")
-
-            # Related rows are removed automatically by FK ON DELETE CASCADE:
-            # parent_players, event_players, attendance, payments
-            cur.execute("""
-                DELETE FROM players
-                WHERE id=%s
-            """, (player_id,))
-
-        conn.commit()
-
-    return {
-        "ok": True,
-        "deleted": {
-            "id": player["id"],
-            "name": player["name"],
-            "team": player["team"],
-        }
-    }
-
-
-@app.delete("/api/admin/events/{event_id}")
-def delete_event(
-    event_id: int,
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id,title,event_date::text
-                FROM events
-                WHERE id=%s
-            """, (event_id,))
-            event = cur.fetchone()
-
-            if not event:
-                raise HTTPException(404, "找不到活動")
-
-            # Related rows are removed automatically by FK ON DELETE CASCADE:
-            # event_players, attendance, notification_logs
-            cur.execute("""
-                DELETE FROM events
-                WHERE id=%s
-            """, (event_id,))
-
-        conn.commit()
-
-    return {
-        "ok": True,
-        "deleted": {
-            "id": event["id"],
-            "title": event["title"],
-            "event_date": event["event_date"],
-        }
-    }
-
-# === Add this API into app.py ===
-
-@app.delete("/api/admin/parents/{parent_id}")
-def delete_parent(
-    parent_id: int,
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id,display_name,line_user_id
-                FROM parents
-                WHERE id=%s
-            """, (parent_id,))
-            parent = cur.fetchone()
-
-            if not parent:
-                raise HTTPException(404, "找不到家長")
-
-            # parent_players will be removed automatically
-            # because parent_id FK uses ON DELETE CASCADE.
-            # notification_logs.parent_id will become NULL
-            # because that FK uses ON DELETE SET NULL.
-            cur.execute("""
-                DELETE FROM parents
-                WHERE id=%s
-            """, (parent_id,))
-
-        conn.commit()
-
-    return {
-        "ok": True,
-        "deleted": {
-            "id": parent["id"],
-            "display_name": parent["display_name"],
-            "line_user_id": parent["line_user_id"],
-        }
-    }
-
-
-
 # ---------------- LINE notification ----------------
 
 def notification_targets(event_id: int, mode: str = "all", primary_only: bool = False):
@@ -1149,7 +1068,7 @@ def notification_targets(event_id: int, mode: str = "all", primary_only: bool = 
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT e.id,e.title,e.event_date::text,e.location,
-                       e.response_deadline::text,e.event_type
+                       e.response_deadline::text,e.event_type,e.meet_time,e.meet_time_tbd
                 FROM events e
                 WHERE e.id=%s
             """, (event_id,))
@@ -1182,6 +1101,8 @@ def notification_targets(event_id: int, mode: str = "all", primary_only: bool = 
 
             cur.execute(sql, (event_id,))
             rows = cur.fetchall()
+            event["meet_time"] = normalize_time_value(event.get("meet_time"))
+            event["matches"] = fetch_event_matches(cur,event_id)
 
     return event, rows
 
@@ -1231,47 +1152,26 @@ def get_notification_targets(
     }
 
 
-async def push_line(user_id, event, player_names, reminder):
+async def push_line(user_id,event,player_names,reminder):
     if not LINE_CHANNEL_ACCESS_TOKEN:
-        return False, "LINE_CHANNEL_ACCESS_TOKEN 尚未設定"
-
-    title = "⏰ 比賽調查提醒" if reminder else "⚾ 比賽參加調查"
-    players = "、".join(player_names)
-    deadline = event.get("response_deadline") or "未設定"
-    url = f"{APP_BASE_URL}/?event={event['id']}" if APP_BASE_URL else ""
-
-    text = (
-        f"{title}\n\n"
-        f"{event['title']}\n"
-        f"日期：{event['event_date']}\n"
-        f"地點：{event['location']}\n"
-        f"球員：{players}\n"
-        f"回覆截止：{deadline}"
-    )
-
-    if reminder:
-        text += "\n\n目前尚未完成回覆，請協助填寫。"
-
-    if url:
-        text += f"\n\n前往填寫：{url}"
-
+        return False,"LINE_CHANNEL_ACCESS_TOKEN 尚未設定"
+    title="⏰ 比賽調查提醒" if reminder else "⚾ 比賽參加調查"
+    players="、".join(player_names)
+    deadline=event.get("response_deadline") or "未設定"
+    meet="未定" if event.get("meet_time_tbd") else (event.get("meet_time") or "未定")
+    url=f"{APP_BASE_URL}/?event={event['id']}" if APP_BASE_URL else ""
+    lines=[title,"",event["title"],f"日期：{event['event_date']}",f"集合時間：{meet}",f"地點：{event['location']}"]
+    for idx,m in enumerate(event.get("matches") or [],start=1):
+        game_time="未定" if m.get("game_time_tbd") else (m.get("game_time") or "未定")
+        lines += ["",f"第{idx}場",f"比賽時間：{game_time}",f"對戰對手：{m.get('opponent') or '未定'}"]
+    lines += ["",f"球員：{players}",f"回覆截止：{deadline}"]
+    if reminder: lines += ["","目前尚未完成回覆，請協助填寫。"]
+    if url: lines += ["",f"前往填寫：{url}"]
+    text="\n".join(lines)
     async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={
-                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "to": user_id,
-                "messages": [{"type": "text", "text": text}],
-            },
-        )
-
-    if 200 <= r.status_code < 300:
-        return True, ""
-
-    return False, f"HTTP {r.status_code}: {r.text[:300]}"
+        r=await client.post("https://api.line.me/v2/bot/message/push",headers={"Authorization":f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}","Content-Type":"application/json"},json={"to":user_id,"messages":[{"type":"text","text":text}]})
+    if 200 <= r.status_code < 300: return True,""
+    return False,f"HTTP {r.status_code}: {r.text[:300]}"
 
 
 @app.post("/api/admin/events/{event_id}/notify")
