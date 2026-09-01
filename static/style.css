@@ -17,3 +17,6 @@ textarea{width:100%;border:1px solid #dce1dc;border-radius:12px;padding:10px}.me
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:#172018;color:white;padding:10px 14px;border-radius:12px;opacity:0;pointer-events:none;transition:.2s;z-index:20}#toast.show{opacity:1}
 
 .matchList{margin-top:10px;display:grid;gap:6px}.matchLine{background:#f3f6f3;border-radius:10px;padding:8px 10px;font-size:13px;color:#34443a}
+
+#profilePage .card h3{margin-top:0}
+#extraBindPreview{margin-top:10px}

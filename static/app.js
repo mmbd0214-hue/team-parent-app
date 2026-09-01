@@ -14,6 +14,70 @@ async function loadApp(){const me=await api("/api/me");state.parent=me.parent;st
 $("previewBindBtn").onclick=async()=>{const code=$("bindCodeInput").value.trim().toUpperCase();if(code.length<4)return toast("請輸入完整綁定碼");try{const d=await api("/api/bind/preview",{method:"POST",body:JSON.stringify({code})});pendingCode=code;const p=d.player;$("bindPreview").classList.remove("hidden");$("bindPreview").innerHTML=`<div class="bindResult"><div class="bindPlayer">⚾ ${p.name}</div><div>${p.team}${p.number?` / #${p.number}`:""}</div><div class="muted">目前已綁定 ${d.linked_parents}/${d.max_parents} 位家長</div>${d.already_bound?'<div class="bindOk">✅ 你已綁定此球員</div>':d.can_bind?'<button id="confirmBindBtn" class="primary">確認綁定</button>':'<div class="bindError">此球員已達家長綁定上限</div>'}</div>`;const b=$("confirmBindBtn");if(b)b.onclick=confirmBinding}catch(e){toast(e.message)}};
 async function confirmBinding(){try{const d=await api("/api/bind/confirm",{method:"POST",body:JSON.stringify({code:pendingCode})});toast(`已綁定 ${d.player.name}`);$("bindCodeInput").value="";$("bindPreview").classList.add("hidden");await loadApp()}catch(e){toast(e.message)}}
 
+
+async function previewExtraBinding(){
+  const code=$("extraBindCodeInput").value.trim().toUpperCase();
+  if(code.length<4)return toast("請輸入完整綁定碼");
+
+  try{
+    const d=await api("/api/bind/preview",{
+      method:"POST",
+      body:JSON.stringify({code})
+    });
+
+    pendingCode=code;
+    const p=d.player;
+
+    $("extraBindPreview").classList.remove("hidden");
+    $("extraBindPreview").innerHTML=`
+      <div class="bindResult">
+        <div class="bindPlayer">⚾ ${p.name}</div>
+        <div>${p.team}${p.number?` / #${p.number}`:""}</div>
+        <div class="muted">目前已綁定 ${d.linked_parents}/${d.max_parents} 位家長</div>
+        ${
+          d.already_bound
+            ? '<div class="bindOk">✅ 你已經綁定此球員</div>'
+            : d.can_bind
+              ? '<button id="extraConfirmBindBtn" class="primary">確認綁定</button>'
+              : '<div class="bindError">此球員已達家長綁定上限</div>'
+        }
+      </div>`;
+
+    const btn=$("extraConfirmBindBtn");
+    if(btn)btn.onclick=confirmExtraBinding;
+
+  }catch(e){
+    toast(e.message);
+  }
+}
+
+async function confirmExtraBinding(){
+  try{
+    const d=await api("/api/bind/confirm",{
+      method:"POST",
+      body:JSON.stringify({code:pendingCode})
+    });
+
+    toast(`已綁定 ${d.player.name}`);
+    $("extraBindCodeInput").value="";
+    $("extraBindPreview").classList.add("hidden");
+
+    // Reload account/player list so the newly bound child appears immediately.
+    state.playerId=null;
+    await loadApp();
+
+    // Return user to profile page after reload.
+    document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
+    $("profilePage").classList.remove("hidden");
+    document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
+    const profileNav=document.querySelector('nav button[data-page="profilePage"]');
+    if(profileNav)profileNav.classList.add("active");
+
+  }catch(e){
+    toast(e.message);
+  }
+}
+
 async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));const payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(payments)}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
@@ -28,4 +92,8 @@ window.openEvent=id=>{const ev=state.events.find(x=>Number(x.id)===Number(id));i
 function toggleLeave(){$("leaveBox").classList.toggle("hidden",document.querySelector("input[name=status]:checked").value!=="leave")}document.querySelectorAll("input[name=status]").forEach(x=>x.onchange=toggleLeave);$("closeDialog").onclick=()=>eventDialog.close();
 $("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("eventId").value);await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({player_id:state.playerId,attendance_status:document.querySelector("input[name=status]:checked").value,leave_reason:$("leaveReason").value,player_meals:Number($("playerMeals").value),parent_meals:Number($("parentMeals").value)})});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active")});
+
+const extraPreviewBtn=$("extraPreviewBindBtn");
+if(extraPreviewBtn)extraPreviewBtn.onclick=previewExtraBinding;
+
 start();
