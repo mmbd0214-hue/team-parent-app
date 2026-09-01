@@ -1096,6 +1096,48 @@ def delete_event(
         }
     }
 
+# === Add this API into app.py ===
+
+@app.delete("/api/admin/parents/{parent_id}")
+def delete_parent(
+    parent_id: int,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,display_name,line_user_id
+                FROM parents
+                WHERE id=%s
+            """, (parent_id,))
+            parent = cur.fetchone()
+
+            if not parent:
+                raise HTTPException(404, "找不到家長")
+
+            # parent_players will be removed automatically
+            # because parent_id FK uses ON DELETE CASCADE.
+            # notification_logs.parent_id will become NULL
+            # because that FK uses ON DELETE SET NULL.
+            cur.execute("""
+                DELETE FROM parents
+                WHERE id=%s
+            """, (parent_id,))
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "deleted": {
+            "id": parent["id"],
+            "display_name": parent["display_name"],
+            "line_user_id": parent["line_user_id"],
+        }
+    }
+
+
 
 # ---------------- LINE notification ----------------
 
