@@ -1,7 +1,7 @@
 
 import os
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date
 
 import httpx
 import psycopg
@@ -13,13 +13,14 @@ from pydantic import BaseModel
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-MOCK_LOGIN = os.getenv("MOCK_LOGIN", "1") == "1"
+MOCK_LOGIN = os.getenv("MOCK_LOGIN", "0") == "1"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me-now")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
 
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL 尚未設定。")
+    raise RuntimeError("DATABASE_URL 尚未設定")
 
 app = FastAPI(title="球隊家長 App")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="static")
@@ -27,6 +28,11 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="
 
 def db():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+
+def new_bind_code():
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
 def init_db():
@@ -85,10 +91,21 @@ def init_db():
 
             cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''")
             cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ")
+
             cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS number TEXT DEFAULT ''")
             cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS bind_code TEXT")
+            cur.execute("ALTER TABLE players ADD COLUMN IF NOT EXISTS max_parents INTEGER NOT NULL DEFAULT 2")
+
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'practice'")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS response_deadline DATE")
+
+            cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_players_bind_code
+            ON players(bind_code)
+            WHERE bind_code IS NOT NULL
+            """)
 
             cur.execute("""
             CREATE TABLE IF NOT EXISTS event_players (
@@ -112,7 +129,7 @@ def init_db():
             )
             """)
 
-            # Only migrate legacy events that have no explicit event_players rows.
+            # legacy events without event_players -> assign all active players once
             cur.execute("""
                 INSERT INTO event_players(event_id, player_id)
                 SELECT e.id, p.id
@@ -124,6 +141,19 @@ def init_db():
                   )
                 ON CONFLICT DO NOTHING
             """)
+
+            # assign bind codes to old players
+            cur.execute("SELECT id FROM players WHERE bind_code IS NULL")
+            ids = [r["id"] for r in cur.fetchall()]
+            for pid in ids:
+                for _ in range(20):
+                    code = new_bind_code()
+                    try:
+                        cur.execute("UPDATE players SET bind_code=%s WHERE id=%s", (code, pid))
+                        break
+                    except psycopg.errors.UniqueViolation:
+                        conn.rollback()
+                        continue
         conn.commit()
 
 
@@ -142,7 +172,17 @@ def admin_page():
     return FileResponse(os.path.join(BASE, "static", "admin.html"))
 
 
-# ---------- Parent login ----------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.get("/api/config")
+def config():
+    return {"liff_id": LINE_LIFF_ID, "mock_login": MOCK_LOGIN}
+
+
+# ---------------- Parent LINE / LIFF auth ----------------
 
 class LineAuth(BaseModel):
     access_token: str | None = None
@@ -155,34 +195,54 @@ async def auth_line(payload: LineAuth):
     else:
         if not payload.access_token:
             raise HTTPException(401, "缺少 LINE access token")
+
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(
                 "https://api.line.me/v2/profile",
                 headers={"Authorization": f"Bearer {payload.access_token}"}
             )
+
         if r.status_code != 200:
             raise HTTPException(401, "LINE 登入驗證失敗")
+
         profile = r.json()
+
+    line_user_id = profile.get("userId")
+    if not line_user_id:
+        raise HTTPException(401, "無法取得 LINE User ID")
 
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT * FROM parents WHERE line_user_id=%s", (profile["userId"],))
+            cur.execute("SELECT * FROM parents WHERE line_user_id=%s", (line_user_id,))
             row = cur.fetchone()
+
             if not row:
-                if not MOCK_LOGIN:
-                    raise HTTPException(403, "此 LINE 帳號尚未綁定球隊家長")
-                cur.execute(
-                    "INSERT INTO parents(line_user_id,display_name,picture_url) VALUES(%s,%s,%s) RETURNING *",
-                    (profile["userId"], profile.get("displayName", "家長"), profile.get("pictureUrl", ""))
-                )
+                cur.execute("""
+                    INSERT INTO parents(line_user_id,display_name,picture_url,last_login_at)
+                    VALUES(%s,%s,%s,NOW())
+                    RETURNING *
+                """, (
+                    line_user_id,
+                    profile.get("displayName", "LINE 家長"),
+                    profile.get("pictureUrl", "")
+                ))
                 row = cur.fetchone()
-            cur.execute("""
-                UPDATE parents SET display_name=%s,picture_url=%s
-                WHERE id=%s RETURNING *
-            """, (profile.get("displayName", row["display_name"]), profile.get("pictureUrl",""), row["id"]))
-            result = cur.fetchone()
+            else:
+                cur.execute("""
+                    UPDATE parents
+                    SET display_name=%s,picture_url=%s,last_login_at=NOW()
+                    WHERE id=%s
+                    RETURNING *
+                """, (
+                    profile.get("displayName", row["display_name"]),
+                    profile.get("pictureUrl", ""),
+                    row["id"]
+                ))
+                row = cur.fetchone()
+
         conn.commit()
-    return {"token": f"parent:{result['id']}", "parent": result}
+
+    return {"token": f"parent:{row['id']}", "parent": row}
 
 
 def current_parent(authorization):
@@ -192,16 +252,260 @@ def current_parent(authorization):
         pid = int(authorization.split(":")[-1])
     except Exception:
         raise HTTPException(401, "登入資訊錯誤")
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM parents WHERE id=%s", (pid,))
-            p = cur.fetchone()
-    if not p:
+            row = cur.fetchone()
+
+    if not row:
         raise HTTPException(401, "家長不存在")
-    return p
+
+    return row
 
 
-# ---------- Admin auth ----------
+# ---------------- Parent self binding ----------------
+
+class BindCodeIn(BaseModel):
+    code: str
+
+
+@app.post("/api/bind/preview")
+def bind_preview(body: BindCodeIn, authorization: str | None = Header(default=None)):
+    parent = current_parent(authorization)
+    code = body.code.strip().upper()
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,name,team,number,active,bind_code,max_parents
+                FROM players
+                WHERE bind_code=%s
+            """, (code,))
+            player = cur.fetchone()
+
+            if not player or not player["active"]:
+                raise HTTPException(404, "找不到此綁定碼")
+
+            cur.execute("SELECT COUNT(*) n FROM parent_players WHERE player_id=%s", (player["id"],))
+            linked = cur.fetchone()["n"]
+
+            cur.execute("""
+                SELECT 1 FROM parent_players
+                WHERE parent_id=%s AND player_id=%s
+            """, (parent["id"], player["id"]))
+            already = bool(cur.fetchone())
+
+    return {
+        "player": {
+            "id": player["id"],
+            "name": player["name"],
+            "team": player["team"],
+            "number": player["number"],
+        },
+        "linked_parents": linked,
+        "max_parents": player["max_parents"],
+        "already_bound": already,
+        "can_bind": already or linked < player["max_parents"],
+    }
+
+
+@app.post("/api/bind/confirm")
+def bind_confirm(body: BindCodeIn, authorization: str | None = Header(default=None)):
+    parent = current_parent(authorization)
+    code = body.code.strip().upper()
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,name,team,number,active,max_parents
+                FROM players
+                WHERE bind_code=%s
+                FOR UPDATE
+            """, (code,))
+            player = cur.fetchone()
+
+            if not player or not player["active"]:
+                raise HTTPException(404, "找不到此綁定碼")
+
+            cur.execute("""
+                SELECT 1 FROM parent_players
+                WHERE parent_id=%s AND player_id=%s
+            """, (parent["id"], player["id"]))
+
+            if cur.fetchone():
+                return {"ok": True, "already_bound": True, "player": player}
+
+            cur.execute("SELECT COUNT(*) n FROM parent_players WHERE player_id=%s", (player["id"],))
+            linked = cur.fetchone()["n"]
+
+            if linked >= player["max_parents"]:
+                raise HTTPException(409, "此球員已達家長綁定數量上限")
+
+            cur.execute("""
+                INSERT INTO parent_players(parent_id,player_id)
+                VALUES(%s,%s)
+            """, (parent["id"], player["id"]))
+
+        conn.commit()
+
+    return {"ok": True, "already_bound": False, "player": player}
+
+
+# ---------------- Parent APIs ----------------
+
+@app.get("/api/me")
+def me(authorization: str | None = Header(default=None)):
+    p = current_parent(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT pl.*
+                FROM players pl
+                JOIN parent_players pp ON pp.player_id=pl.id
+                WHERE pp.parent_id=%s AND pl.active=TRUE
+                ORDER BY pl.team,pl.name
+            """, (p["id"],))
+            players = cur.fetchall()
+
+    return {
+        "parent": p,
+        "players": players,
+        "needs_binding": len(players) == 0
+    }
+
+
+@app.get("/api/events")
+def parent_events(authorization: str | None = Header(default=None)):
+    p = current_parent(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT
+                    e.id,e.title,e.event_date::text,e.location,e.meal_price,
+                    e.status,e.event_type,e.response_deadline::text
+                FROM events e
+                JOIN event_players ep ON ep.event_id=e.id
+                JOIN parent_players pp ON pp.player_id=ep.player_id
+                WHERE pp.parent_id=%s
+                  AND e.event_date >= %s
+                ORDER BY e.event_date
+            """, (p["id"], date.today()))
+            return cur.fetchall()
+
+
+@app.get("/api/players/{player_id}/attendance")
+def player_attendance(player_id: int, authorization: str | None = Header(default=None)):
+    p = current_parent(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM parent_players
+                WHERE parent_id=%s AND player_id=%s
+            """, (p["id"], player_id))
+
+            if not cur.fetchone():
+                raise HTTPException(403, "無權查看此球員")
+
+            cur.execute("SELECT * FROM attendance WHERE player_id=%s", (player_id,))
+            return cur.fetchall()
+
+
+class AttendanceIn(BaseModel):
+    player_id: int
+    attendance_status: str
+    leave_reason: str = ""
+    player_meals: int = 0
+    parent_meals: int = 0
+
+
+@app.put("/api/events/{event_id}/attendance")
+def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None = Header(default=None)):
+    p = current_parent(authorization)
+
+    if body.attendance_status not in ("attend", "leave", "maybe"):
+        raise HTTPException(400, "attendance_status 錯誤")
+
+    if body.player_meals < 0 or body.parent_meals < 0:
+        raise HTTPException(400, "餐點數量不可為負數")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM parent_players
+                WHERE parent_id=%s AND player_id=%s
+            """, (p["id"], body.player_id))
+
+            if not cur.fetchone():
+                raise HTTPException(403, "無權修改此球員")
+
+            cur.execute("""
+                SELECT 1 FROM event_players
+                WHERE event_id=%s AND player_id=%s
+            """, (event_id, body.player_id))
+
+            if not cur.fetchone():
+                raise HTTPException(403, "此球員不在本活動名單")
+
+            cur.execute("""
+                SELECT 1 FROM events
+                WHERE id=%s AND status='open'
+                  AND (response_deadline IS NULL OR response_deadline >= %s)
+            """, (event_id, date.today()))
+
+            if not cur.fetchone():
+                raise HTTPException(403, "活動已截止")
+
+            cur.execute("""
+                INSERT INTO attendance(
+                    event_id,player_id,attendance_status,
+                    leave_reason,player_meals,parent_meals
+                )
+                VALUES(%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(event_id,player_id) DO UPDATE SET
+                    attendance_status=EXCLUDED.attendance_status,
+                    leave_reason=EXCLUDED.leave_reason,
+                    player_meals=EXCLUDED.player_meals,
+                    parent_meals=EXCLUDED.parent_meals
+            """, (
+                event_id,body.player_id,body.attendance_status,
+                body.leave_reason.strip(),body.player_meals,body.parent_meals
+            ))
+
+        conn.commit()
+
+    return {"ok": True}
+
+
+@app.get("/api/players/{player_id}/payments")
+def player_payments(player_id: int, authorization: str | None = Header(default=None)):
+    p = current_parent(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 1 FROM parent_players
+                WHERE parent_id=%s AND player_id=%s
+            """, (p["id"], player_id))
+
+            if not cur.fetchone():
+                raise HTTPException(403, "無權查看此球員")
+
+            cur.execute("""
+                SELECT id,player_id,title,amount,due_date::text,status,note
+                FROM payments
+                WHERE player_id=%s
+                ORDER BY
+                  CASE status WHEN 'unpaid' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+                  due_date NULLS LAST
+            """, (player_id,))
+            return cur.fetchall()
+
+
+# ---------------- Admin auth ----------------
 
 class AdminLogin(BaseModel):
     password: str
@@ -220,108 +524,15 @@ def require_admin(authorization):
         raise HTTPException(401, "管理員驗證失敗")
 
 
-# ---------- Parent APIs ----------
-
-@app.get("/api/me")
-def me(authorization: str | None = Header(default=None)):
-    p = current_parent(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT pl.* FROM players pl
-                JOIN parent_players pp ON pp.player_id=pl.id
-                WHERE pp.parent_id=%s AND pl.active=TRUE
-                ORDER BY pl.team,pl.name
-            """, (p["id"],))
-            players = cur.fetchall()
-    return {"parent": p, "players": players}
-
-
-@app.get("/api/events")
-def parent_events(authorization: str | None = Header(default=None)):
-    p = current_parent(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT DISTINCT e.id,e.title,e.event_date::text,e.location,e.meal_price,
-                       e.status,e.event_type,e.response_deadline::text
-                FROM events e
-                JOIN event_players ep ON ep.event_id=e.id
-                JOIN parent_players pp ON pp.player_id=ep.player_id
-                WHERE pp.parent_id=%s AND e.event_date >= %s
-                ORDER BY e.event_date
-            """, (p["id"], date.today()))
-            return cur.fetchall()
-
-
-@app.get("/api/players/{player_id}/attendance")
-def player_attendance(player_id: int, authorization: str | None = Header(default=None)):
-    p = current_parent(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM parent_players WHERE parent_id=%s AND player_id=%s", (p["id"], player_id))
-            if not cur.fetchone():
-                raise HTTPException(403, "無權查看此球員")
-            cur.execute("SELECT * FROM attendance WHERE player_id=%s", (player_id,))
-            return cur.fetchall()
-
-
-class AttendanceIn(BaseModel):
-    player_id: int
-    attendance_status: str
-    leave_reason: str = ""
-    player_meals: int = 0
-    parent_meals: int = 0
-
-
-@app.put("/api/events/{event_id}/attendance")
-def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None = Header(default=None)):
-    p = current_parent(authorization)
-    if body.attendance_status not in ("attend", "leave", "maybe"):
-        raise HTTPException(400, "attendance_status 錯誤")
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM parent_players WHERE parent_id=%s AND player_id=%s", (p["id"], body.player_id))
-            if not cur.fetchone():
-                raise HTTPException(403, "無權修改此球員")
-            cur.execute("SELECT 1 FROM event_players WHERE event_id=%s AND player_id=%s", (event_id, body.player_id))
-            if not cur.fetchone():
-                raise HTTPException(403, "此球員不在本活動名單")
-            cur.execute("""
-                INSERT INTO attendance(event_id,player_id,attendance_status,leave_reason,player_meals,parent_meals)
-                VALUES(%s,%s,%s,%s,%s,%s)
-                ON CONFLICT(event_id,player_id) DO UPDATE SET
-                  attendance_status=EXCLUDED.attendance_status,
-                  leave_reason=EXCLUDED.leave_reason,
-                  player_meals=EXCLUDED.player_meals,
-                  parent_meals=EXCLUDED.parent_meals
-            """, (event_id,body.player_id,body.attendance_status,body.leave_reason.strip(),body.player_meals,body.parent_meals))
-        conn.commit()
-    return {"ok": True}
-
-
-@app.get("/api/players/{player_id}/payments")
-def player_payments(player_id: int, authorization: str | None = Header(default=None)):
-    p = current_parent(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM parent_players WHERE parent_id=%s AND player_id=%s", (p["id"],player_id))
-            if not cur.fetchone():
-                raise HTTPException(403, "無權查看此球員")
-            cur.execute("""
-                SELECT id,player_id,title,amount,due_date::text,status,note
-                FROM payments WHERE player_id=%s ORDER BY due_date NULLS LAST
-            """, (player_id,))
-            return cur.fetchall()
-
-
-# ---------- Admin models ----------
+# ---------------- Admin models ----------------
 
 class PlayerIn(BaseModel):
     name: str
     team: str
     number: str = ""
     active: bool = True
+    max_parents: int = 2
+
 
 class ParentIn(BaseModel):
     display_name: str
@@ -329,9 +540,11 @@ class ParentIn(BaseModel):
     phone: str = ""
     is_primary: bool = True
 
+
 class BindIn(BaseModel):
     parent_id: int
     player_id: int
+
 
 class EventIn(BaseModel):
     title: str
@@ -342,8 +555,10 @@ class EventIn(BaseModel):
     response_deadline: str | None = None
     player_ids: list[int] = []
 
+
 class EventUpdateIn(EventIn):
     status: str = "open"
+
 
 class PaymentIn(BaseModel):
     player_id: int
@@ -353,317 +568,534 @@ class PaymentIn(BaseModel):
     status: str = "unpaid"
     note: str = ""
 
+
 class NotifyIn(BaseModel):
-    mode: str = "all"            # all | unanswered
-    primary_only: bool = False   # notify only parents marked primary
+    mode: str = "all"
+    primary_only: bool = False
 
 
-# ---------- Admin CRUD ----------
+# ---------------- Admin dashboard ----------------
 
 @app.get("/api/admin/dashboard")
 def admin_dashboard(authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) n FROM players WHERE active=TRUE"); players=cur.fetchone()["n"]
-            cur.execute("SELECT COUNT(*) n FROM parents"); parents=cur.fetchone()["n"]
-            cur.execute("SELECT COUNT(*) n FROM events WHERE event_date >= %s",(date.today(),)); events=cur.fetchone()["n"]
-            cur.execute("SELECT COALESCE(SUM(amount),0) total FROM payments WHERE status<>'paid'"); unpaid=cur.fetchone()["total"]
+            cur.execute("SELECT COUNT(*) n FROM players WHERE active=TRUE")
+            players = cur.fetchone()["n"]
+
+            cur.execute("SELECT COUNT(*) n FROM parents")
+            parents = cur.fetchone()["n"]
+
+            cur.execute("SELECT COUNT(*) n FROM events WHERE event_date >= %s", (date.today(),))
+            events = cur.fetchone()["n"]
+
+            cur.execute("SELECT COALESCE(SUM(amount),0) total FROM payments WHERE status<>'paid'")
+            unpaid = cur.fetchone()["total"]
+
             cur.execute("""
-                SELECT COUNT(*) n FROM event_players ep
+                SELECT COUNT(*) n
+                FROM event_players ep
                 JOIN events e ON e.id=ep.event_id
                 LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id
                 WHERE e.event_date >= %s AND a.id IS NULL
-            """,(date.today(),)); pending=cur.fetchone()["n"]
-    return {"players":players,"parents":parents,"events":events,"unpaid":unpaid,"pending_replies":pending}
+            """, (date.today(),))
+            pending = cur.fetchone()["n"]
 
+            cur.execute("""
+                SELECT COUNT(*) n
+                FROM parents pa
+                LEFT JOIN parent_players pp ON pp.parent_id=pa.id
+                WHERE pp.parent_id IS NULL
+            """)
+            unbound = cur.fetchone()["n"]
+
+    return {
+        "players": players,
+        "parents": parents,
+        "events": events,
+        "unpaid": unpaid,
+        "pending_replies": pending,
+        "unbound_parents": unbound,
+    }
+
+
+# ---------------- Admin players / parents ----------------
 
 @app.get("/api/admin/players")
 def admin_players(authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT p.*,
-                  COALESCE(json_agg(json_build_object('id',pa.id,'display_name',pa.display_name))
-                  FILTER (WHERE pa.id IS NOT NULL),'[]') parents
+                  COALESCE(
+                    json_agg(json_build_object('id',pa.id,'display_name',pa.display_name))
+                    FILTER (WHERE pa.id IS NOT NULL),
+                    '[]'
+                  ) parents,
+                  COUNT(pa.id) AS linked_parent_count
                 FROM players p
                 LEFT JOIN parent_players pp ON pp.player_id=p.id
                 LEFT JOIN parents pa ON pa.id=pp.parent_id
-                GROUP BY p.id ORDER BY p.team,p.name
+                GROUP BY p.id
+                ORDER BY p.team,p.name
             """)
             return cur.fetchall()
 
 
 @app.post("/api/admin/players")
-def create_player(body:PlayerIn,authorization:str|None=Header(default=None)):
+def create_player(body: PlayerIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO players(name,team,number,active) VALUES(%s,%s,%s,%s) RETURNING *",
-                        (body.name.strip(),body.team.strip(),body.number.strip(),body.active))
-            row=cur.fetchone()
-        conn.commit()
-    return row
+            for _ in range(20):
+                code = new_bind_code()
+                try:
+                    cur.execute("""
+                        INSERT INTO players(name,team,number,active,bind_code,max_parents)
+                        VALUES(%s,%s,%s,%s,%s,%s)
+                        RETURNING *
+                    """, (
+                        body.name.strip(),body.team.strip(),body.number.strip(),
+                        body.active,code,max(1,body.max_parents)
+                    ))
+                    row = cur.fetchone()
+                    conn.commit()
+                    return row
+                except psycopg.errors.UniqueViolation:
+                    conn.rollback()
+
+    raise HTTPException(500, "無法產生綁定碼")
 
 
 @app.put("/api/admin/players/{player_id}")
-def update_player(player_id:int,body:PlayerIn,authorization:str|None=Header(default=None)):
+def update_player(player_id: int, body: PlayerIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("UPDATE players SET name=%s,team=%s,number=%s,active=%s WHERE id=%s RETURNING *",
-                        (body.name.strip(),body.team.strip(),body.number.strip(),body.active,player_id))
-            row=cur.fetchone()
+            cur.execute("""
+                UPDATE players
+                SET name=%s,team=%s,number=%s,active=%s,max_parents=%s
+                WHERE id=%s
+                RETURNING *
+            """, (
+                body.name.strip(),body.team.strip(),body.number.strip(),
+                body.active,max(1,body.max_parents),player_id
+            ))
+            row = cur.fetchone()
         conn.commit()
-    if not row: raise HTTPException(404,"找不到球員")
+
+    if not row:
+        raise HTTPException(404, "找不到球員")
+
     return row
 
 
-@app.get("/api/admin/parents")
-def admin_parents(authorization:str|None=Header(default=None)):
+@app.post("/api/admin/players/{player_id}/reset-bind-code")
+def reset_bind_code(player_id: int, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
+    with db() as conn:
+        for _ in range(20):
+            code = new_bind_code()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE players
+                        SET bind_code=%s
+                        WHERE id=%s
+                        RETURNING id,name,team,number,bind_code
+                    """, (code, player_id))
+                    row = cur.fetchone()
+
+                if not row:
+                    raise HTTPException(404, "找不到球員")
+
+                conn.commit()
+                return row
+
+            except psycopg.errors.UniqueViolation:
+                conn.rollback()
+
+    raise HTTPException(500, "無法產生新的綁定碼")
+
+
+@app.get("/api/admin/parents")
+def admin_parents(authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT pa.*,
-                  COALESCE(json_agg(json_build_object('id',p.id,'name',p.name,'team',p.team))
-                  FILTER (WHERE p.id IS NOT NULL),'[]') players
+                  COALESCE(
+                    json_agg(
+                      json_build_object('id',p.id,'name',p.name,'team',p.team)
+                    )
+                    FILTER (WHERE p.id IS NOT NULL),
+                    '[]'
+                  ) players
                 FROM parents pa
                 LEFT JOIN parent_players pp ON pp.parent_id=pa.id
                 LEFT JOIN players p ON p.id=pp.player_id
-                GROUP BY pa.id ORDER BY pa.display_name
+                GROUP BY pa.id
+                ORDER BY CASE WHEN COUNT(p.id)=0 THEN 0 ELSE 1 END,pa.display_name
             """)
             return cur.fetchall()
 
 
 @app.post("/api/admin/parents")
-def create_parent(body:ParentIn,authorization:str|None=Header(default=None)):
+def create_parent(body: ParentIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO parents(display_name,line_user_id,phone,is_primary)
-                VALUES(%s,%s,%s,%s) RETURNING *
-            """,(body.display_name.strip(),body.line_user_id.strip(),body.phone.strip(),body.is_primary))
-            row=cur.fetchone()
-        conn.commit()
-    return row
+
+    try:
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO parents(display_name,line_user_id,phone,is_primary)
+                    VALUES(%s,%s,%s,%s)
+                    RETURNING *
+                """, (
+                    body.display_name.strip(),body.line_user_id.strip(),
+                    body.phone.strip(),body.is_primary
+                ))
+                row = cur.fetchone()
+            conn.commit()
+
+        return row
+
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "此 LINE User ID 已存在")
 
 
 @app.post("/api/admin/bind")
-def bind(body:BindIn,authorization:str|None=Header(default=None)):
+def admin_bind(body: BindIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO parent_players(parent_id,player_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                        (body.parent_id,body.player_id))
-        conn.commit()
-    return {"ok":True}
 
-
-@app.delete("/api/admin/bind")
-def unbind(parent_id:int=Query(...),player_id:int=Query(...),authorization:str|None=Header(default=None)):
-    require_admin(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM parent_players WHERE parent_id=%s AND player_id=%s",(parent_id,player_id))
-        conn.commit()
-    return {"ok":True}
-
-
-@app.get("/api/admin/events")
-def admin_events(authorization:str|None=Header(default=None)):
-    require_admin(authorization)
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,e.status,e.event_type,
-                       e.response_deadline::text,
+                INSERT INTO parent_players(parent_id,player_id)
+                VALUES(%s,%s)
+                ON CONFLICT DO NOTHING
+            """, (body.parent_id, body.player_id))
+        conn.commit()
+
+    return {"ok": True}
+
+
+@app.delete("/api/admin/bind")
+def admin_unbind(
+    parent_id: int = Query(...),
+    player_id: int = Query(...),
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM parent_players
+                WHERE parent_id=%s AND player_id=%s
+            """, (parent_id, player_id))
+        conn.commit()
+
+    return {"ok": True}
+
+
+# ---------------- Admin events ----------------
+
+@app.get("/api/admin/events")
+def admin_events(authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,
+                       e.status,e.event_type,e.response_deadline::text,
                        COUNT(ep.player_id) invited,
                        COUNT(a.id) replied,
                        COALESCE(SUM(CASE WHEN a.attendance_status='attend' THEN 1 ELSE 0 END),0) attend,
                        COALESCE(SUM(CASE WHEN a.attendance_status='leave' THEN 1 ELSE 0 END),0) leave,
+                       COALESCE(SUM(CASE WHEN a.attendance_status='maybe' THEN 1 ELSE 0 END),0) maybe,
                        COALESCE(SUM(COALESCE(a.player_meals,0)+COALESCE(a.parent_meals,0)),0) meals
                 FROM events e
                 LEFT JOIN event_players ep ON ep.event_id=e.id
                 LEFT JOIN attendance a ON a.event_id=e.id AND a.player_id=ep.player_id
-                GROUP BY e.id ORDER BY e.event_date DESC,e.id DESC
+                GROUP BY e.id
+                ORDER BY e.event_date DESC,e.id DESC
             """)
             return cur.fetchall()
 
 
 @app.post("/api/admin/events")
-def create_event(body:EventIn,authorization:str|None=Header(default=None)):
+def create_event(body: EventIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO events(title,event_date,location,meal_price,event_type,response_deadline)
-                VALUES(%s,%s,%s,%s,%s,%s) RETURNING *
-            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,body.response_deadline or None))
-            event=cur.fetchone()
+                INSERT INTO events(
+                    title,event_date,location,meal_price,event_type,response_deadline
+                )
+                VALUES(%s,%s,%s,%s,%s,%s)
+                RETURNING *
+            """, (
+                body.title.strip(),body.event_date,body.location.strip(),
+                body.meal_price,body.event_type,body.response_deadline or None
+            ))
+            event = cur.fetchone()
+
             if body.player_ids:
-                cur.executemany("INSERT INTO event_players(event_id,player_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                                [(event["id"],pid) for pid in body.player_ids])
+                cur.executemany("""
+                    INSERT INTO event_players(event_id,player_id)
+                    VALUES(%s,%s)
+                    ON CONFLICT DO NOTHING
+                """, [(event["id"], pid) for pid in body.player_ids])
+
         conn.commit()
+
     return event
 
 
 @app.put("/api/admin/events/{event_id}")
-def update_event(event_id:int,body:EventUpdateIn,authorization:str|None=Header(default=None)):
+def update_event(event_id: int, body: EventUpdateIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE events SET title=%s,event_date=%s,location=%s,meal_price=%s,event_type=%s,
-                response_deadline=%s,status=%s WHERE id=%s RETURNING *
-            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,
-                 body.response_deadline or None,body.status,event_id))
-            event=cur.fetchone()
-            if not event: raise HTTPException(404,"找不到活動")
-            cur.execute("DELETE FROM event_players WHERE event_id=%s",(event_id,))
+                UPDATE events
+                SET title=%s,event_date=%s,location=%s,meal_price=%s,
+                    event_type=%s,response_deadline=%s,status=%s
+                WHERE id=%s
+                RETURNING *
+            """, (
+                body.title.strip(),body.event_date,body.location.strip(),
+                body.meal_price,body.event_type,body.response_deadline or None,
+                body.status,event_id
+            ))
+            event = cur.fetchone()
+
+            if not event:
+                raise HTTPException(404, "找不到活動")
+
+            cur.execute("DELETE FROM event_players WHERE event_id=%s", (event_id,))
+
             if body.player_ids:
-                cur.executemany("INSERT INTO event_players(event_id,player_id) VALUES(%s,%s)",
-                                [(event_id,pid) for pid in body.player_ids])
+                cur.executemany("""
+                    INSERT INTO event_players(event_id,player_id)
+                    VALUES(%s,%s)
+                """, [(event_id, pid) for pid in body.player_ids])
+
         conn.commit()
+
     return event
 
 
 @app.get("/api/admin/events/{event_id}")
-def admin_event_detail(event_id:int,authorization:str|None=Header(default=None)):
+def admin_event_detail(event_id: int, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id,title,event_date::text,location,meal_price,status,event_type,response_deadline::text
-                FROM events WHERE id=%s
-            """,(event_id,))
-            event=cur.fetchone()
-            if not event: raise HTTPException(404,"找不到活動")
-            cur.execute("""
-                SELECT p.id,p.name,p.team,p.number,a.attendance_status,a.leave_reason,
-                       COALESCE(a.player_meals,0) player_meals,COALESCE(a.parent_meals,0) parent_meals
-                FROM event_players ep JOIN players p ON p.id=ep.player_id
-                LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id
-                WHERE ep.event_id=%s ORDER BY p.team,p.name
-            """,(event_id,))
-            players=cur.fetchall()
-    return {"event":event,"players":players}
+                SELECT id,title,event_date::text,location,meal_price,status,
+                       event_type,response_deadline::text
+                FROM events
+                WHERE id=%s
+            """, (event_id,))
+            event = cur.fetchone()
 
+            if not event:
+                raise HTTPException(404, "找不到活動")
+
+            cur.execute("""
+                SELECT p.id,p.name,p.team,p.number,
+                       a.attendance_status,a.leave_reason,
+                       COALESCE(a.player_meals,0) player_meals,
+                       COALESCE(a.parent_meals,0) parent_meals
+                FROM event_players ep
+                JOIN players p ON p.id=ep.player_id
+                LEFT JOIN attendance a
+                  ON a.event_id=ep.event_id AND a.player_id=ep.player_id
+                WHERE ep.event_id=%s
+                ORDER BY p.team,p.name
+            """, (event_id,))
+            players = cur.fetchall()
+
+    return {"event": event, "players": players}
+
+
+# ---------------- Admin payments ----------------
 
 @app.get("/api/admin/payments")
-def admin_payments(authorization:str|None=Header(default=None)):
+def admin_payments(authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT pay.id,pay.player_id,p.name player_name,p.team,pay.title,pay.amount,
-                       pay.due_date::text,pay.status,pay.note
-                FROM payments pay JOIN players p ON p.id=pay.player_id
-                ORDER BY pay.due_date NULLS LAST,p.name
+                SELECT pay.id,pay.player_id,p.name player_name,p.team,
+                       pay.title,pay.amount,pay.due_date::text,pay.status,pay.note
+                FROM payments pay
+                JOIN players p ON p.id=pay.player_id
+                ORDER BY
+                  CASE pay.status WHEN 'unpaid' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+                  pay.due_date NULLS LAST,p.name
             """)
             return cur.fetchall()
 
 
 @app.post("/api/admin/payments")
-def create_payment(body:PaymentIn,authorization:str|None=Header(default=None)):
+def create_payment(body: PaymentIn, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO payments(player_id,title,amount,due_date,status,note)
-                VALUES(%s,%s,%s,%s,%s,%s) RETURNING *
-            """,(body.player_id,body.title.strip(),body.amount,body.due_date or None,body.status,body.note.strip()))
-            row=cur.fetchone()
+                INSERT INTO payments(
+                    player_id,title,amount,due_date,status,note
+                )
+                VALUES(%s,%s,%s,%s,%s,%s)
+                RETURNING *
+            """, (
+                body.player_id,body.title.strip(),body.amount,
+                body.due_date or None,body.status,body.note.strip()
+            ))
+            row = cur.fetchone()
         conn.commit()
+
     return row
 
 
 @app.put("/api/admin/payments/{payment_id}/status")
-def update_payment_status(payment_id:int,status:str=Query(...),authorization:str|None=Header(default=None)):
+def update_payment_status(
+    payment_id: int,
+    status: str = Query(...),
+    authorization: str | None = Header(default=None),
+):
     require_admin(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("UPDATE payments SET status=%s WHERE id=%s RETURNING *",(status,payment_id))
-            row=cur.fetchone()
-        conn.commit()
-    if not row: raise HTTPException(404,"找不到繳費項目")
-    return row
 
+    if status not in ("unpaid", "paid", "pending"):
+        raise HTTPException(400, "status 錯誤")
 
-# ---------- LINE notification ----------
-
-def notification_targets(event_id:int, mode:str="all", primary_only:bool=False):
-    if mode not in ("all","unanswered"):
-        raise HTTPException(400,"mode 必須是 all 或 unanswered")
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT e.id,e.title,e.event_date::text,e.location,e.response_deadline::text,e.event_type
-                FROM events e WHERE e.id=%s
-            """,(event_id,))
-            event=cur.fetchone()
+                UPDATE payments
+                SET status=%s
+                WHERE id=%s
+                RETURNING *
+            """, (status, payment_id))
+            row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(404, "找不到繳費項目")
+
+    return row
+
+
+# ---------------- LINE notification ----------------
+
+def notification_targets(event_id: int, mode: str = "all", primary_only: bool = False):
+    if mode not in ("all", "unanswered"):
+        raise HTTPException(400, "mode 錯誤")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT e.id,e.title,e.event_date::text,e.location,
+                       e.response_deadline::text,e.event_type
+                FROM events e
+                WHERE e.id=%s
+            """, (event_id,))
+            event = cur.fetchone()
+
             if not event:
-                raise HTTPException(404,"找不到活動")
+                raise HTTPException(404, "找不到活動")
 
             sql = """
                 SELECT DISTINCT
-                    p.id player_id,p.name player_name,p.team,
-                    pa.id parent_id,pa.display_name parent_name,pa.line_user_id,pa.is_primary,
-                    a.attendance_status
+                  p.id player_id,p.name player_name,p.team,
+                  pa.id parent_id,pa.display_name parent_name,
+                  pa.line_user_id,pa.is_primary,a.attendance_status
                 FROM event_players ep
                 JOIN players p ON p.id=ep.player_id
-                LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id
+                LEFT JOIN attendance a
+                  ON a.event_id=ep.event_id AND a.player_id=ep.player_id
                 LEFT JOIN parent_players pp ON pp.player_id=p.id
                 LEFT JOIN parents pa ON pa.id=pp.parent_id
                 WHERE ep.event_id=%s
             """
-            params=[event_id]
-            if mode=="unanswered":
+
+            if mode == "unanswered":
                 sql += " AND a.id IS NULL"
+
             if primary_only:
                 sql += " AND pa.is_primary=TRUE"
+
             sql += " ORDER BY p.team,p.name,pa.display_name"
-            cur.execute(sql,params)
-            rows=cur.fetchall()
+
+            cur.execute(sql, (event_id,))
+            rows = cur.fetchall()
+
     return event, rows
 
 
 @app.get("/api/admin/events/{event_id}/notification-targets")
 def get_notification_targets(
-    event_id:int,
-    mode:str=Query("all"),
-    primary_only:bool=Query(False),
-    authorization:str|None=Header(default=None)
+    event_id: int,
+    mode: str = Query("all"),
+    primary_only: bool = Query(False),
+    authorization: str | None = Header(default=None),
 ):
     require_admin(authorization)
-    event, rows=notification_targets(event_id,mode,primary_only)
-    valid=[r for r in rows if r["parent_id"] and r["line_user_id"]]
-    missing=[r for r in rows if not r["parent_id"] or not r["line_user_id"]]
-    # Deduplicate by LINE user while keeping player names
-    grouped={}
-    for r in valid:
-        key=r["line_user_id"]
+
+    event, rows = notification_targets(event_id, mode, primary_only)
+
+    grouped = {}
+    missing = []
+
+    for r in rows:
+        if not r["parent_id"] or not r["line_user_id"]:
+            missing.append(r)
+            continue
+
+        key = r["line_user_id"]
+
         if key not in grouped:
-            grouped[key]={
-                "line_user_id":key,
-                "parent_id":r["parent_id"],
-                "parent_name":r["parent_name"],
-                "players":[]
+            grouped[key] = {
+                "line_user_id": key,
+                "parent_id": r["parent_id"],
+                "parent_name": r["parent_name"],
+                "players": [],
             }
-        grouped[key]["players"].append({"id":r["player_id"],"name":r["player_name"],"team":r["team"]})
+
+        grouped[key]["players"].append({
+            "id": r["player_id"],
+            "name": r["player_name"],
+            "team": r["team"],
+        })
+
     return {
-        "event":event,
-        "mode":mode,
-        "recipients":list(grouped.values()),
-        "recipient_count":len(grouped),
-        "missing":missing,
-        "missing_count":len(missing)
+        "event": event,
+        "mode": mode,
+        "recipients": list(grouped.values()),
+        "recipient_count": len(grouped),
+        "missing": missing,
+        "missing_count": len(missing),
     }
 
 
-async def push_line(user_id:str, event:dict, player_names:list[str], reminder:bool):
+async def push_line(user_id, event, player_names, reminder):
     if not LINE_CHANNEL_ACCESS_TOKEN:
         return False, "LINE_CHANNEL_ACCESS_TOKEN 尚未設定"
 
@@ -680,99 +1112,120 @@ async def push_line(user_id:str, event:dict, player_names:list[str], reminder:bo
         f"球員：{players}\n"
         f"回覆截止：{deadline}"
     )
+
     if reminder:
         text += "\n\n目前尚未完成回覆，請協助填寫。"
+
     if url:
         text += f"\n\n前往填寫：{url}"
 
-    payload = {
-        "to": user_id,
-        "messages": [{"type":"text","text":text}]
-    }
     async with httpx.AsyncClient(timeout=15) as client:
-        r=await client.post(
+        r = await client.post(
             "https://api.line.me/v2/bot/message/push",
             headers={
-                "Authorization":f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                "Content-Type":"application/json"
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json",
             },
-            json=payload
+            json={
+                "to": user_id,
+                "messages": [{"type": "text", "text": text}],
+            },
         )
+
     if 200 <= r.status_code < 300:
         return True, ""
+
     return False, f"HTTP {r.status_code}: {r.text[:300]}"
 
 
 @app.post("/api/admin/events/{event_id}/notify")
-async def notify_event(event_id:int,body:NotifyIn,authorization:str|None=Header(default=None)):
+async def notify_event(
+    event_id: int,
+    body: NotifyIn,
+    authorization: str | None = Header(default=None),
+):
     require_admin(authorization)
-    event, rows=notification_targets(event_id,body.mode,body.primary_only)
 
-    grouped={}
+    event, rows = notification_targets(event_id, body.mode, body.primary_only)
+    grouped = {}
+
     for r in rows:
         if not r["parent_id"] or not r["line_user_id"]:
             continue
-        key=r["line_user_id"]
+
+        key = r["line_user_id"]
+
         if key not in grouped:
-            grouped[key]={
-                "parent_id":r["parent_id"],
-                "parent_name":r["parent_name"],
-                "line_user_id":key,
-                "players":[]
+            grouped[key] = {
+                "parent_id": r["parent_id"],
+                "parent_name": r["parent_name"],
+                "line_user_id": key,
+                "players": [],
             }
+
         grouped[key]["players"].append({
-            "id":r["player_id"],"name":r["player_name"],"team":r["team"]
+            "id": r["player_id"],
+            "name": r["player_name"],
         })
 
-    results=[]
-    reminder=body.mode=="unanswered"
+    reminder = body.mode == "unanswered"
+    results = []
+
     for recipient in grouped.values():
-        ok,error=await push_line(
-            recipient["line_user_id"],event,
-            [p["name"] for p in recipient["players"]],reminder
+        ok, error = await push_line(
+            recipient["line_user_id"],
+            event,
+            [p["name"] for p in recipient["players"]],
+            reminder,
         )
+
         results.append({
-            "parent_name":recipient["parent_name"],
-            "ok":ok,"error":error,
-            "players":[p["name"] for p in recipient["players"]]
+            "parent_name": recipient["parent_name"],
+            "ok": ok,
+            "error": error,
         })
+
         with db() as conn:
             with conn.cursor() as cur:
                 for p in recipient["players"]:
                     cur.execute("""
                         INSERT INTO notification_logs(
-                          event_id,parent_id,player_id,notification_type,line_user_id,status,error_message
-                        ) VALUES(%s,%s,%s,%s,%s,%s,%s)
-                    """,(
-                        event_id,recipient["parent_id"],p["id"],
+                          event_id,parent_id,player_id,notification_type,
+                          line_user_id,status,error_message
+                        )
+                        VALUES(%s,%s,%s,%s,%s,%s,%s)
+                    """, (
+                        event_id,
+                        recipient["parent_id"],
+                        p["id"],
                         "reminder" if reminder else "invite",
                         recipient["line_user_id"],
                         "sent" if ok else "failed",
-                        error
+                        error,
                     ))
             conn.commit()
 
     return {
-        "ok": all(x["ok"] for x in results) if results else False,
         "sent": sum(1 for x in results if x["ok"]),
         "failed": sum(1 for x in results if not x["ok"]),
-        "results":results,
-        "line_configured":bool(LINE_CHANNEL_ACCESS_TOKEN)
+        "results": results,
     }
 
 
 @app.get("/api/admin/events/{event_id}/notification-logs")
-def notification_log(event_id:int,authorization:str|None=Header(default=None)):
+def notification_log(event_id: int, authorization: str | None = Header(default=None)):
     require_admin(authorization)
+
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT nl.id,nl.notification_type,nl.status,nl.error_message,nl.sent_at,
-                       pa.display_name parent_name,p.name player_name
+                SELECT nl.id,nl.notification_type,nl.status,nl.error_message,
+                       nl.sent_at,pa.display_name parent_name,p.name player_name
                 FROM notification_logs nl
                 LEFT JOIN parents pa ON pa.id=nl.parent_id
                 LEFT JOIN players p ON p.id=nl.player_id
-                WHERE nl.event_id=%s ORDER BY nl.sent_at DESC
+                WHERE nl.event_id=%s
+                ORDER BY nl.sent_at DESC
                 LIMIT 100
-            """,(event_id,))
+            """, (event_id,))
             return cur.fetchall()

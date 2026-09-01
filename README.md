@@ -1,73 +1,54 @@
-# 球隊家長 App - Supabase PostgreSQL 版
+# 球隊家長 App 完整版
 
-這一版已從 SQLite 改成 PostgreSQL，適合部署到 Render，資料庫使用 Supabase。
+整合功能：
+- LINE Login / LIFF
+- 首次登入自動取得 LINE User ID
+- Supabase parents 自動建立
+- 家長自助輸入球員綁定碼
+- 球員綁定碼預覽與確認
+- 一位家長可綁多位球員
+- 一位球員可限制最多家長數
+- 家長端：活動、出席、請假、訂餐、繳費
+- `/admin` 管理後台
+- 球員新增 / 編輯 / 停用
+- 綁定碼查看 / 複製 / 重設
+- 家長與球員綁定 / 解除
+- 建立練球 / 比賽 / 活動
+- 每場指定球員
+- 回覆截止日期
+- 出席 / 請假 / 未回覆 / 餐點統計
+- LINE 通知對象預覽
+- 發送全部通知
+- 只提醒未回覆
+- 通知紀錄
+- 繳費新增與狀態管理
+- `/health` Render health check
 
-## 1. 建立 Supabase 專案
+## Render Environment
 
-進入 Supabase Dashboard 建立新專案。
+必要：
+- DATABASE_URL
+- ADMIN_PASSWORD
+- LINE_CHANNEL_ACCESS_TOKEN
+- LINE_LIFF_ID
+- APP_BASE_URL
+- MOCK_LOGIN=0
 
-建立完成後到：
+## LINE Login / LIFF
 
-Project Settings → Database
+Endpoint URL:
+https://你的-render-網址.onrender.com/
 
-找到 PostgreSQL Connection String。
+## 更新現有專案
 
-建議使用 Transaction pooler 或 Session pooler 的連線字串，並確保 SSL 可用。
+建議先備份目前版本，再將這個完整版的所有檔案覆蓋到 repo 根目錄。
 
-你需要一條類似：
-
-```text
-postgresql://postgres.xxxxx:PASSWORD@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres?sslmode=require
-```
-
-請把真正密碼放進連線字串。
-
-## 2. 本機測試
-
-PowerShell：
+然後：
 
 ```powershell
-$env:DATABASE_URL="你的 Supabase PostgreSQL connection string"
-$env:MOCK_LOGIN="1"
-
-python -m uvicorn app:app --reload --host 0.0.0.0 --port 8000
+git add .
+git commit -m "Integrate full team app"
+git push
 ```
 
-第一次啟動時程式會自動建立：
-
-- parents
-- players
-- parent_players
-- events
-- attendance
-- payments
-
-如果 MOCK_LOGIN=1 且資料庫是空的，也會建立 Demo 資料。
-
-## 3. Render 部署
-
-GitHub push 後，在 Render 使用 Blueprint 或 Web Service。
-
-Render Environment Variables：
-
-```text
-DATABASE_URL = Supabase PostgreSQL connection string
-MOCK_LOGIN = 1
-```
-
-測試完成、正式串 LINE 前，再把：
-
-```text
-MOCK_LOGIN=0
-```
-
-## 4. 注意
-
-請不要把真實 DATABASE_URL、資料庫密碼 commit 到 GitHub。
-`.env` 已加入 `.gitignore`。
-
-正式版之後建議再加：
-- 簽章 Session / JWT
-- 管理員後台
-- 比賽指定球員與通知名單
-- LINE Messaging API
+Render Auto Deploy 會自動更新。

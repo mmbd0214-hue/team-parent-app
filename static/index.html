@@ -1,83 +1,99 @@
 <!doctype html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>球隊家長 App</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
-  <div id="login" class="screen center">
-    <div class="logo">🐯</div>
-    <h1>球隊家長 App</h1>
-    <p class="muted">請使用 LINE 登入</p>
-    <button id="lineLogin" class="line-btn">LINE 登入</button>
-    <button id="mockLogin" class="secondary">測試登入</button>
+<div id="loading" class="screen center">
+  <div class="logo">🐯</div><h1>球隊家長 App</h1><p class="muted" id="loadingText">正在連接 LINE...</p>
+</div>
+
+<div id="login" class="screen center hidden">
+  <div class="logo">🐯</div><h1>球隊家長 App</h1><p class="muted">請使用 LINE 登入</p>
+  <button id="lineLogin" class="line-btn">LINE 登入</button>
+  <button id="mockLogin" class="secondary hidden">測試登入</button>
+</div>
+
+<div id="binding" class="screen center hidden">
+  <div class="logo smallLogo">👨‍👩‍👧</div>
+  <h2 id="bindingHello">登入成功</h2>
+  <div class="waitingCard">
+    <h3>綁定球員</h3>
+    <p class="muted">請輸入球隊提供的 6 碼球員綁定碼。</p>
+    <input id="bindCodeInput" class="bindCodeInput" maxlength="6" placeholder="例如 A7K29X">
+    <button id="previewBindBtn" class="primary">查詢球員</button>
+    <div id="bindPreview" class="hidden"></div>
   </div>
+  <button id="retryBinding" class="secondary">我已綁定，重新整理</button>
+</div>
 
-  <div id="app" class="screen hidden">
-    <header>
-      <div><div class="eyebrow">家長專區</div><h2 id="hello">你好</h2></div>
-      <select id="playerSelect"></select>
-    </header>
+<div id="app" class="screen hidden">
+  <header>
+    <div><div class="eyebrow">家長專區</div><h2 id="hello">你好</h2></div>
+    <select id="playerSelect"></select>
+  </header>
 
-    <main>
-      <section id="homePage" class="page">
-        <div class="hero card">
-          <div><div class="eyebrow">目前球員</div><h2 id="playerName">—</h2><div id="playerTeam" class="pill">—</div></div>
-          <div class="heroIcon">⚾️</div>
-        </div>
-        <h3>近期活動</h3><div id="events"></div>
-        <h3>待繳費</h3><div id="paymentsPreview"></div>
-      </section>
+  <main>
+    <section id="homePage" class="page">
+      <div class="hero card">
+        <div><div class="eyebrow">目前球員</div><h2 id="playerName">—</h2><div id="playerTeam" class="pill">—</div></div>
+        <div class="heroIcon">⚾️</div>
+      </div>
+      <div id="deepLinkNotice" class="card notice hidden"></div>
+      <h3>近期活動</h3><div id="events"></div>
+      <h3>待繳費</h3><div id="paymentsPreview"></div>
+    </section>
 
-      <section id="paymentsPage" class="page hidden">
-        <h2>繳費紀錄</h2><p class="muted">查看目前應繳與已繳項目。</p><div id="payments"></div>
-      </section>
+    <section id="paymentsPage" class="page hidden">
+      <h2>繳費紀錄</h2><p class="muted">查看目前應繳與已繳項目。</p><div id="payments"></div>
+    </section>
 
-      <section id="profilePage" class="page hidden">
-        <h2>我的資料</h2>
-        <div class="card">
-          <div class="row"><span>LINE 名稱</span><strong id="parentName"></strong></div>
-          <div class="row"><span>綁定球員</span><strong id="childrenCount"></strong></div>
-        </div>
-      </section>
-    </main>
+    <section id="profilePage" class="page hidden">
+      <h2>我的資料</h2>
+      <div class="card">
+        <div class="row"><span>LINE 名稱</span><strong id="parentName"></strong></div>
+        <div class="row"><span>綁定球員</span><strong id="childrenCount"></strong></div>
+      </div>
+    </section>
+  </main>
 
-    <nav>
-      <button data-page="homePage" class="active"><span>🏠</span>首頁</button>
-      <button data-page="paymentsPage"><span>💰</span>繳費</button>
-      <button data-page="profilePage"><span>👤</span>我的</button>
-    </nav>
+  <nav>
+    <button data-page="homePage" class="active"><span>🏠</span>首頁</button>
+    <button data-page="paymentsPage"><span>💰</span>繳費</button>
+    <button data-page="profilePage"><span>👤</span>我的</button>
+  </nav>
+</div>
+
+<dialog id="eventDialog">
+<form id="eventForm">
+  <input type="hidden" id="eventId">
+  <div class="dialogTitle">
+    <div><div class="eyebrow">活動回覆</div><h2 id="dialogEventTitle"></h2></div>
+    <button type="button" id="closeDialog" class="iconBtn">✕</button>
   </div>
+  <label>是否出席？</label>
+  <div class="segmented">
+    <label><input type="radio" name="status" value="attend" checked><span>✅ 出席</span></label>
+    <label><input type="radio" name="status" value="leave"><span>請假</span></label>
+  </div>
+  <div id="leaveBox" class="hidden">
+    <label for="leaveReason">請假原因</label>
+    <textarea id="leaveReason" rows="3"></textarea>
+  </div>
+  <label>午餐登記</label>
+  <div class="mealGrid">
+    <div><span>球員餐</span><input id="playerMeals" type="number" min="0" value="1"></div>
+    <div><span>家長餐</span><input id="parentMeals" type="number" min="0" value="0"></div>
+  </div>
+  <button type="submit" class="primary">確認登記</button>
+</form>
+</dialog>
 
-  <dialog id="eventDialog">
-    <form id="eventForm">
-      <input type="hidden" id="eventId">
-      <div class="dialogTitle">
-        <div><div class="eyebrow">活動回覆</div><h2 id="dialogEventTitle"></h2></div>
-        <button type="button" id="closeDialog" class="iconBtn">✕</button>
-      </div>
-      <label>是否出席？</label>
-      <div class="segmented">
-        <label><input type="radio" name="status" value="attend" checked><span>✅ 出席</span></label>
-        <label><input type="radio" name="status" value="leave"><span>請假</span></label>
-      </div>
-      <div id="leaveBox" class="hidden">
-        <label for="leaveReason">請假原因</label>
-        <textarea id="leaveReason" rows="3"></textarea>
-      </div>
-      <label>午餐登記</label>
-      <div class="mealGrid">
-        <div><span>球員餐</span><input id="playerMeals" type="number" min="0" value="1"></div>
-        <div><span>家長餐</span><input id="parentMeals" type="number" min="0" value="0"></div>
-      </div>
-      <button type="submit" class="primary">確認登記</button>
-    </form>
-  </dialog>
-
-  <div id="toast"></div>
-  <script src="/static/app.js"></script>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
 </body>
 </html>
