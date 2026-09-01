@@ -1,146 +1,53 @@
 <!doctype html>
-<html lang="zh-Hant">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>球隊管理後台</title>
-  <link rel="stylesheet" href="/static/admin.css">
-</head>
-<body>
-<div id="loginBox" class="loginWrap">
-  <div class="loginCard">
-    <div class="logo">🐯</div>
-    <h1>球隊管理後台</h1>
-    <p>管理球員、活動、訂餐與繳費</p>
-    <input id="adminPassword" type="password" placeholder="管理員密碼">
-    <button id="loginBtn">登入</button>
-    <div id="loginError" class="error"></div>
-  </div>
-</div>
+<html lang="zh-Hant"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>球隊管理後台</title><link rel="stylesheet" href="/static/admin.css">
+</head><body>
+<div id="loginBox" class="loginWrap"><div class="loginCard"><div class="logo">🐯</div><h1>球隊管理後台</h1><p>管理球員、活動、通知與繳費</p><input id="adminPassword" type="password" placeholder="管理員密碼"><button id="loginBtn">登入</button><div id="loginError" class="error"></div></div></div>
 
 <div id="adminApp" class="app hidden">
-  <aside>
-    <div class="brand">🐯 球隊後台</div>
-    <nav>
-      <button data-page="dashboard" class="active">📊 總覽</button>
-      <button data-page="players">⚾ 球員</button>
-      <button data-page="parents">👨‍👩‍👧 家長</button>
-      <button data-page="events">📅 活動 / 比賽</button>
-      <button data-page="payments">💰 繳費</button>
-    </nav>
-  </aside>
+<aside><div class="brand">🐯 球隊後台</div><nav>
+<button data-page="dashboard" class="active">📊 總覽</button><button data-page="players">⚾ 球員</button>
+<button data-page="parents">👨‍👩‍👧 家長</button><button data-page="events">📅 活動 / 比賽</button><button data-page="payments">💰 繳費</button>
+</nav></aside>
+<main><header><div><div class="eyebrow">ADMIN</div><h1 id="pageTitle">總覽</h1></div><button id="logoutBtn" class="ghost">登出</button></header>
+<section id="dashboard" class="page"><div id="stats" class="stats"></div><div class="panel"><h2>快速操作</h2><div class="quick"><button onclick="openPlayer()">＋ 新增球員</button><button onclick="openEvent()">＋ 建立活動</button><button onclick="openPayment()">＋ 新增收費</button></div></div></section>
+<section id="players" class="page hidden"><div class="toolbar"><h2>球員管理</h2><button onclick="openPlayer()">＋ 新增球員</button></div><div id="playerTable"></div></section>
+<section id="parents" class="page hidden"><div class="toolbar"><h2>家長管理</h2><button onclick="openParent()">＋ 新增家長</button></div><div id="parentTable"></div></section>
+<section id="events" class="page hidden"><div class="toolbar"><h2>活動 / 比賽</h2><button onclick="openEvent()">＋ 建立活動</button></div><div id="eventTable"></div></section>
+<section id="payments" class="page hidden"><div class="toolbar"><h2>繳費管理</h2><button onclick="openPayment()">＋ 新增收費</button></div><div id="paymentTable"></div></section>
+</main></div>
 
-  <main>
-    <header>
-      <div>
-        <div class="eyebrow">ADMIN</div>
-        <h1 id="pageTitle">總覽</h1>
-      </div>
-      <button id="logoutBtn" class="ghost">登出</button>
-    </header>
+<dialog id="playerDialog"><form id="playerForm"><h2 id="playerDialogTitle">新增球員</h2><input type="hidden" id="playerId"><label>姓名<input id="playerNameInput" required></label><label>組別<input id="playerTeamInput" required></label><label>背號<input id="playerNumberInput"></label><label class="check"><input id="playerActiveInput" type="checkbox" checked> 啟用</label><div class="actions"><button type="button" onclick="playerDialog.close()" class="ghost">取消</button><button>儲存</button></div></form></dialog>
+<dialog id="parentDialog"><form id="parentForm"><h2>新增家長</h2><label>家長名稱<input id="parentNameInput" required></label><label>LINE User ID<input id="parentLineInput" required></label><label>電話<input id="parentPhoneInput"></label><label>先綁定球員<select id="bindPlayerInput"></select></label><div class="actions"><button type="button" onclick="parentDialog.close()" class="ghost">取消</button><button>儲存</button></div></form></dialog>
+<dialog id="bindDialog"><form id="bindForm"><h2>綁定家長與球員</h2><label>家長<select id="bindParentSelect"></select></label><label>球員<select id="bindPlayerSelect"></select></label><div class="actions"><button type="button" onclick="bindDialog.close()" class="ghost">取消</button><button>綁定</button></div></form></dialog>
 
-    <section id="dashboard" class="page">
-      <div id="stats" class="stats"></div>
-      <div class="panel">
-        <h2>快速操作</h2>
-        <div class="quick">
-          <button onclick="openPlayer()">＋ 新增球員</button>
-          <button onclick="openEvent()">＋ 建立活動</button>
-          <button onclick="openPayment()">＋ 新增收費</button>
-        </div>
-      </div>
-    </section>
+<dialog id="eventDialog"><form id="adminEventForm"><h2 id="eventDialogTitle">建立活動 / 比賽</h2><input type="hidden" id="editEventId">
+<label>名稱<input id="eventTitleInput" required></label><div class="grid2"><label>日期<input id="eventDateInput" type="date" required></label><label>回覆截止<input id="eventDeadlineInput" type="date"></label></div>
+<label>地點<input id="eventLocationInput" required></label><div class="grid2"><label>類型<select id="eventTypeInput"><option value="practice">練球</option><option value="game">比賽</option><option value="event">活動</option></select></label><label>餐費/份<input id="eventMealInput" type="number" min="0" value="100"></label></div>
+<label id="eventStatusLabel" class="hidden">狀態<select id="eventStatusInput"><option value="open">開放</option><option value="closed">關閉</option></select></label>
+<div class="toolbar small"><strong>通知 / 調查球員</strong><div><button type="button" class="ghost" onclick="toggleAllPlayers(true)">全選</button><button type="button" class="ghost" onclick="toggleAllPlayers(false)">全不選</button></div></div>
+<div id="eventPlayerChoices" class="choices"></div><div class="actions"><button type="button" onclick="eventDialog.close()" class="ghost">取消</button><button>儲存</button></div></form></dialog>
 
-    <section id="players" class="page hidden">
-      <div class="toolbar"><h2>球員管理</h2><button onclick="openPlayer()">＋ 新增球員</button></div>
-      <div id="playerTable"></div>
-    </section>
+<dialog id="eventDetailDialog"><div class="dialogContent wide">
+<div class="toolbar"><div><div class="eyebrow">活動統計與 LINE 通知</div><h2 id="eventDetailTitle"></h2></div><button class="ghost" onclick="eventDetailDialog.close()">關閉</button></div>
+<div id="eventSummary" class="stats compact"></div>
 
-    <section id="parents" class="page hidden">
-      <div class="toolbar"><h2>家長管理</h2><button onclick="openParent()">＋ 新增家長</button></div>
-      <div id="parentTable"></div>
-    </section>
-
-    <section id="events" class="page hidden">
-      <div class="toolbar"><h2>活動 / 比賽</h2><button onclick="openEvent()">＋ 建立活動</button></div>
-      <div id="eventTable"></div>
-    </section>
-
-    <section id="payments" class="page hidden">
-      <div class="toolbar"><h2>繳費管理</h2><button onclick="openPayment()">＋ 新增收費</button></div>
-      <div id="paymentTable"></div>
-    </section>
-  </main>
+<div class="notifyPanel">
+  <div class="toolbar">
+    <div><h3>LINE 通知</h3><p class="muted">通知對象依本場指定球員，自動找到綁定家長。</p></div>
+    <label class="inlineCheck"><input id="primaryOnly" type="checkbox"> 只通知主要家長</label>
+  </div>
+  <div id="notifyTargets"></div>
+  <div class="notifyActions">
+    <button id="notifyAllBtn">📣 發送比賽通知</button>
+    <button id="notifyPendingBtn" class="warning">⏰ 只提醒未回覆</button>
+  </div>
 </div>
 
-<dialog id="playerDialog"><form id="playerForm">
-  <h2 id="playerDialogTitle">新增球員</h2>
-  <input type="hidden" id="playerId">
-  <label>姓名<input id="playerNameInput" required></label>
-  <label>組別<input id="playerTeamInput" placeholder="例如 U12" required></label>
-  <label>背號<input id="playerNumberInput" placeholder="例如 18"></label>
-  <label class="check"><input id="playerActiveInput" type="checkbox" checked> 啟用此球員</label>
-  <div class="actions"><button type="button" onclick="playerDialog.close()" class="ghost">取消</button><button>儲存</button></div>
-</form></dialog>
+<h3>球員回覆明細</h3><div id="eventDetailBody"></div>
+<h3>最近通知紀錄</h3><div id="notifyLogs"></div>
+</div></dialog>
 
-<dialog id="parentDialog"><form id="parentForm">
-  <h2>新增家長</h2>
-  <label>家長名稱<input id="parentNameInput" required></label>
-  <label>LINE User ID<input id="parentLineInput" placeholder="正式串 LINE 後使用" required></label>
-  <label>電話<input id="parentPhoneInput"></label>
-  <label>先綁定球員<select id="bindPlayerInput"></select></label>
-  <div class="actions"><button type="button" onclick="parentDialog.close()" class="ghost">取消</button><button>儲存</button></div>
-</form></dialog>
-
-<dialog id="bindDialog"><form id="bindForm">
-  <h2>綁定家長與球員</h2>
-  <label>家長<select id="bindParentSelect"></select></label>
-  <label>球員<select id="bindPlayerSelect"></select></label>
-  <div class="actions"><button type="button" onclick="bindDialog.close()" class="ghost">取消</button><button>綁定</button></div>
-</form></dialog>
-
-<dialog id="eventDialog"><form id="adminEventForm">
-  <h2 id="eventDialogTitle">建立活動 / 比賽</h2>
-  <input type="hidden" id="editEventId">
-  <label>名稱<input id="eventTitleInput" required></label>
-  <div class="grid2">
-    <label>日期<input id="eventDateInput" type="date" required></label>
-    <label>回覆截止<input id="eventDeadlineInput" type="date"></label>
-  </div>
-  <label>地點<input id="eventLocationInput" required></label>
-  <div class="grid2">
-    <label>類型<select id="eventTypeInput">
-      <option value="practice">練球</option><option value="game">比賽</option><option value="event">活動</option>
-    </select></label>
-    <label>餐費/份<input id="eventMealInput" type="number" min="0" value="100"></label>
-  </div>
-  <label id="eventStatusLabel" class="hidden">狀態<select id="eventStatusInput"><option value="open">開放</option><option value="closed">關閉</option></select></label>
-  <div class="toolbar small"><strong>選擇球員</strong><div><button type="button" class="ghost" onclick="toggleAllPlayers(true)">全選</button><button type="button" class="ghost" onclick="toggleAllPlayers(false)">全不選</button></div></div>
-  <div id="eventPlayerChoices" class="choices"></div>
-  <div class="actions"><button type="button" onclick="eventDialog.close()" class="ghost">取消</button><button>儲存</button></div>
-</form></dialog>
-
-<dialog id="eventDetailDialog">
-  <div class="dialogContent wide">
-    <div class="toolbar"><h2 id="eventDetailTitle"></h2><button class="ghost" onclick="eventDetailDialog.close()">關閉</button></div>
-    <div id="eventSummary" class="stats compact"></div>
-    <div id="eventDetailBody"></div>
-  </div>
-</dialog>
-
-<dialog id="paymentDialog"><form id="paymentForm">
-  <h2>新增收費</h2>
-  <label>球員<select id="paymentPlayerInput"></select></label>
-  <label>項目<input id="paymentTitleInput" placeholder="例如 9 月隊費" required></label>
-  <div class="grid2">
-    <label>金額<input id="paymentAmountInput" type="number" min="0" required></label>
-    <label>繳費期限<input id="paymentDueInput" type="date"></label>
-  </div>
-  <label>備註<textarea id="paymentNoteInput" rows="3"></textarea></label>
-  <div class="actions"><button type="button" onclick="paymentDialog.close()" class="ghost">取消</button><button>建立</button></div>
-</form></dialog>
-
-<div id="toast"></div>
-<script src="/static/admin.js"></script>
-</body>
-</html>
+<dialog id="paymentDialog"><form id="paymentForm"><h2>新增收費</h2><label>球員<select id="paymentPlayerInput"></select></label><label>項目<input id="paymentTitleInput" required></label><div class="grid2"><label>金額<input id="paymentAmountInput" type="number" min="0" required></label><label>期限<input id="paymentDueInput" type="date"></label></div><label>備註<textarea id="paymentNoteInput"></textarea></label><div class="actions"><button type="button" onclick="paymentDialog.close()" class="ghost">取消</button><button>建立</button></div></form></dialog>
+<div id="toast"></div><script src="/static/admin.js"></script></body></html>
