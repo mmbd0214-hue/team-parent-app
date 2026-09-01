@@ -1,5 +1,5 @@
 
-let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{}},pendingCode="";
+let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{}},pendingCode="",currentEventType="";
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
 async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
@@ -88,9 +88,57 @@ function renderEvents(){
   }).join("")||`<div class="card muted">目前沒有活動</div>`
 }
 function renderPayments(rows){const card=p=>`<div class="card payment"><div><strong>${p.title}</strong><div class="meta">${p.due_date||""}</div></div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></div></div></div>`;$("payments").innerHTML=rows.map(card).join("")||`<div class="card">目前沒有繳費項目</div>`;const u=rows.filter(x=>x.status!=="paid");$("paymentsPreview").innerHTML=u.slice(0,3).map(card).join("")||`<div class="card">目前沒有待繳費用</div>`}
-window.openEvent=id=>{const ev=state.events.find(x=>Number(x.id)===Number(id));if(!ev)return;const a=state.attendance[id];$("eventId").value=id;$("dialogEventTitle").textContent=ev.title;const s=a?.attendance_status||"attend",r=document.querySelector(`input[name=status][value=${s}]`);if(r)r.checked=true;$("leaveReason").value=a?.leave_reason||"";$("playerMeals").value=a?.player_meals??1;$("parentMeals").value=a?.parent_meals??0;toggleLeave();eventDialog.showModal()};
-function toggleLeave(){$("leaveBox").classList.toggle("hidden",document.querySelector("input[name=status]:checked").value!=="leave")}document.querySelectorAll("input[name=status]").forEach(x=>x.onchange=toggleLeave);$("closeDialog").onclick=()=>eventDialog.close();
-$("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("eventId").value);await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({player_id:state.playerId,attendance_status:document.querySelector("input[name=status]:checked").value,leave_reason:$("leaveReason").value,player_meals:Number($("playerMeals").value),parent_meals:Number($("parentMeals").value)})});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
+window.openEvent=id=>{
+  const ev=state.events.find(x=>Number(x.id)===Number(id));
+  if(!ev)return;
+
+  currentEventType=ev.event_type||"practice";
+  const a=state.attendance[id];
+
+  $("eventId").value=id;
+  $("dialogEventTitle").textContent=ev.title;
+
+  const s=a?.attendance_status||"attend";
+  const r=document.querySelector(`input[name=status][value=${s}]`);
+  if(r)r.checked=true;
+
+  $("leaveReason").value=a?.leave_reason||"";
+  $("attendanceNote").value=a?.attendance_note||"";
+
+  const duration=a?.practice_duration||"full";
+  const dr=document.querySelector(`input[name=practiceDuration][value=${duration}]`);
+  if(dr)dr.checked=true;
+
+  $("playerMeals").value=a?.player_meals??1;
+  $("parentMeals").value=a?.parent_meals??0;
+
+  toggleAttendanceOptions();
+  eventDialog.showModal();
+};
+function toggleAttendanceOptions(){
+  const status=document.querySelector("input[name=status]:checked").value;
+  const isAttend=status==="attend";
+
+  $("leaveBox").classList.toggle("hidden",isAttend);
+  $("practiceAttendBox").classList.toggle(
+    "hidden",
+    !(isAttend && currentEventType==="practice")
+  );
+  $("gameAttendNoteBox").classList.toggle(
+    "hidden",
+    !(isAttend && currentEventType==="game")
+  );
+}
+document.querySelectorAll("input[name=status]").forEach(x=>x.onchange=toggleAttendanceOptions);$("closeDialog").onclick=()=>eventDialog.close();
+$("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("eventId").value);await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({
+  player_id:state.playerId,
+  attendance_status:document.querySelector("input[name=status]:checked").value,
+  leave_reason:$("leaveReason").value,
+  practice_duration:document.querySelector("input[name=practiceDuration]:checked")?.value||"full",
+  attendance_note:$("attendanceNote").value,
+  player_meals:Number($("playerMeals").value),
+  parent_meals:Number($("parentMeals").value)
+})});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active")});
 
 const extraPreviewBtn=$("extraPreviewBindBtn");

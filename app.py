@@ -100,6 +100,10 @@ def init_db():
 
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'practice'")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS response_deadline DATE")
+
+            cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS practice_duration TEXT DEFAULT 'full'")
+            cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS attendance_note TEXT DEFAULT ''")
+
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS meet_time TIME")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS meet_time_tbd BOOLEAN NOT NULL DEFAULT FALSE")
 
@@ -442,6 +446,8 @@ class AttendanceIn(BaseModel):
     player_id: int
     attendance_status: str
     leave_reason: str = ""
+    practice_duration: str = "full"
+    attendance_note: str = ""
     player_meals: int = 0
     parent_meals: int = 0
 
@@ -455,6 +461,9 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
 
     if body.player_meals < 0 or body.parent_meals < 0:
         raise HTTPException(400, "餐點數量不可為負數")
+
+    if body.practice_duration not in ("full", "half"):
+        raise HTTPException(400, "practice_duration 錯誤")
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -486,17 +495,22 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
             cur.execute("""
                 INSERT INTO attendance(
                     event_id,player_id,attendance_status,
-                    leave_reason,player_meals,parent_meals
+                    leave_reason,practice_duration,attendance_note,
+                    player_meals,parent_meals
                 )
-                VALUES(%s,%s,%s,%s,%s,%s)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT(event_id,player_id) DO UPDATE SET
                     attendance_status=EXCLUDED.attendance_status,
                     leave_reason=EXCLUDED.leave_reason,
+                    practice_duration=EXCLUDED.practice_duration,
+                    attendance_note=EXCLUDED.attendance_note,
                     player_meals=EXCLUDED.player_meals,
                     parent_meals=EXCLUDED.parent_meals
             """, (
                 event_id,body.player_id,body.attendance_status,
-                body.leave_reason.strip(),body.player_meals,body.parent_meals
+                body.leave_reason.strip(),body.practice_duration,
+                body.attendance_note.strip(),
+                body.player_meals,body.parent_meals
             ))
 
         conn.commit()
