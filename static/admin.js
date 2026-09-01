@@ -90,10 +90,45 @@ $("primaryOnly").onchange=()=>loadTargets("all");
 $("notifyAllBtn").onclick=async()=>{await loadTargets("all");if(!confirm("確定發送 LINE 比賽通知？"))return;try{const r=await api(`/api/admin/events/${currentEventId}/notify`,{method:"POST",body:JSON.stringify({mode:"all",primary_only:$("primaryOnly").checked})});toast(`LINE 通知：成功 ${r.sent}、失敗 ${r.failed}`);await loadLogs()}catch(e){toast(e.message)}};
 $("notifyPendingBtn").onclick=async()=>{await loadTargets("unanswered");if(!confirm("確定只提醒尚未回覆的家長？"))return;try{const r=await api(`/api/admin/events/${currentEventId}/notify`,{method:"POST",body:JSON.stringify({mode:"unanswered",primary_only:$("primaryOnly").checked})});toast(`提醒：成功 ${r.sent}、失敗 ${r.failed}`);await Promise.all([loadTargets("unanswered"),loadLogs()])}catch(e){toast(e.message)}};
 
-async function loadPayments(){cache.payments=await api("/api/admin/payments");$("paymentTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>球員</th><th>項目</th><th>金額</th><th>期限</th><th>狀態</th><th>操作</th></tr></thead><tbody>${cache.payments.map(p=>`<tr><td>${p.player_name}/${p.team}</td><td><strong>${p.title}</strong><div>${p.note||""}</div></td><td>${fmtMoney(p.amount)}</td><td>${p.due_date||"-"}</td><td><span class="tag ${p.status==="paid"?"green":p.status==="pending"?"amber":"red"}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></td><td><div class="rowActions"><button onclick="setPayment(${p.id},'paid')">已繳</button><button onclick="setPayment(${p.id},'pending')">待確認</button><button onclick="setPayment(${p.id},'unpaid')">未繳</button></div></td></tr>`).join("")}</tbody></table></div>`}
+async function loadPayments(){cache.payments=await api("/api/admin/payments");$("paymentTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>球員</th><th>項目</th><th>金額</th><th>期限</th><th>狀態</th><th>操作</th></tr></thead><tbody>${cache.payments.map(p=>`<tr><td>${p.player_name}/${p.team}</td><td><strong>${p.title}</strong><div>${p.note||""}</div></td><td>${fmtMoney(p.amount)}</td><td>${p.due_date||"-"}</td><td><span class="tag ${p.status==="paid"?"green":p.status==="pending"?"amber":"red"}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></td><td><div class="rowActions"><button onclick="setPayment(${p.id},'paid')">已繳</button><button onclick="setPayment(${p.id},'pending')">待確認</button><button onclick="setPayment(${p.id},'unpaid')">未繳</button><button onclick="deletePayment(${p.id})">刪除</button></div></td></tr>`).join("")}</tbody></table></div>`}
 window.openPayment=()=>{$("paymentForm").reset();$("paymentPlayerInput").innerHTML=cache.players.filter(p=>p.active).map(p=>`<option value="${p.id}">${p.name}/${p.team}</option>`).join("");paymentDialog.showModal()};
 $("paymentForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/admin/payments",{method:"POST",body:JSON.stringify({player_id:Number($("paymentPlayerInput").value),title:$("paymentTitleInput").value,amount:Number($("paymentAmountInput").value),due_date:$("paymentDueInput").value||null,status:"unpaid",note:$("paymentNoteInput").value})});paymentDialog.close();toast("收費已建立");await Promise.all([loadPayments(),loadDashboard()])}catch(e){toast(e.message)}};
 window.setPayment=async(id,status)=>{try{await api(`/api/admin/payments/${id}/status?status=${status}`,{method:"PUT"});toast("狀態已更新");await Promise.all([loadPayments(),loadDashboard()])}catch(e){toast(e.message)}};
+
+
+window.deletePayment = async (id) => {
+  const p = cache.payments.find(x => Number(x.id) === Number(id));
+
+  if (!p) {
+    toast("找不到繳費資料");
+    return;
+  }
+
+  const msg =
+    `確定要刪除這筆繳費項目嗎？\n\n` +
+    `球員：${p.player_name} / ${p.team}\n` +
+    `項目：${p.title}\n` +
+    `金額：${fmtMoney(p.amount)}\n` +
+    `狀態：${p.status === "paid" ? "已繳" : p.status === "pending" ? "待確認" : "未繳"}\n\n` +
+    `刪除後無法復原。`;
+
+  if (!confirm(msg)) return;
+
+  try {
+    await api(`/api/admin/payments/${id}`, {
+      method: "DELETE"
+    });
+
+    toast(`已刪除繳費項目：${p.title}`);
+
+    await Promise.all([
+      loadPayments(),
+      loadDashboard()
+    ]);
+  } catch (e) {
+    toast(e.message);
+  }
+};
 
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
 

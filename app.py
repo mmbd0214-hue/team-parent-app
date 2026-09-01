@@ -1072,6 +1072,51 @@ def update_payment_status(
     return row
 
 
+
+@app.delete("/api/admin/payments/{payment_id}")
+def delete_payment(
+    payment_id: int,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    pay.id,
+                    pay.title,
+                    pay.amount,
+                    p.name AS player_name,
+                    p.team
+                FROM payments pay
+                JOIN players p ON p.id=pay.player_id
+                WHERE pay.id=%s
+            """, (payment_id,))
+            payment = cur.fetchone()
+
+            if not payment:
+                raise HTTPException(404, "找不到繳費項目")
+
+            cur.execute("""
+                DELETE FROM payments
+                WHERE id=%s
+            """, (payment_id,))
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "deleted": {
+            "id": payment["id"],
+            "title": payment["title"],
+            "amount": payment["amount"],
+            "player_name": payment["player_name"],
+            "team": payment["team"],
+        }
+    }
+
+
 # ---------------- LINE notification ----------------
 
 def notification_targets(event_id: int, mode: str = "all", primary_only: bool = False):
