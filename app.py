@@ -616,6 +616,16 @@ class PaymentIn(BaseModel):
     note: str = ""
 
 
+class PaymentBatchIn(BaseModel):
+    target_type: str
+    target_value: str | None = None
+    title: str
+    amount: int
+    due_date: str | None = None
+    status: str = "unpaid"
+    note: str = ""
+
+
 class NotifyIn(BaseModel):
     mode: str = "all"
     primary_only: bool = False
@@ -1042,6 +1052,91 @@ def create_payment(body: PaymentIn, authorization: str | None = Header(default=N
         conn.commit()
 
     return row
+
+
+
+@app.post("/api/admin/payments/batch")
+def create_payment_batch(
+    body: PaymentBatchIn,
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    if body.target_type not in ("all", "team", "player"):
+        raise HTTPException(400, "target_type 錯誤")
+
+    if body.amount < 0:
+        raise HTTPException(400, "金額不可為負數")
+
+    if body.status not in ("unpaid", "pending", "paid"):
+        raise HTTPException(400, "status 錯誤")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            if body.target_type == "all":
+                cur.execute("""
+                    SELECT id,name,team
+                    FROM players
+                    WHERE active=TRUE
+                    ORDER BY team,name
+                """)
+            elif body.target_type == "team":
+                if not body.target_value:
+                    raise HTTPException(400, "缺少組別")
+                cur.execute("""
+                    SELECT id,name,team
+                    FROM players
+                    WHERE active=TRUE AND team=%s
+                    ORDER BY name
+                """, (body.target_value,))
+            else:
+                try:
+                    player_id = int(body.target_value or "")
+                except ValueError:
+                    raise HTTPException(400, "球員 ID 錯誤")
+
+                cur.execute("""
+                    SELECT id,name,team
+                    FROM players
+                    WHERE active=TRUE AND id=%s
+                """, (player_id,))
+
+            players = cur.fetchall()
+
+            if not players:
+                raise HTTPException(404, "找不到符合條件的球員")
+
+            rows = []
+            for p in players:
+                cur.execute("""
+                    INSERT INTO payments(
+                        player_id,title,amount,due_date,status,note
+                    )
+                    VALUES(%s,%s,%s,%s,%s,%s)
+                    RETURNING id
+                """, (
+                    p["id"],
+                    body.title.strip(),
+                    body.amount,
+                    body.due_date or None,
+                    body.status,
+                    body.note.strip()
+                ))
+                new_row = cur.fetchone()
+                rows.append({
+                    "payment_id": new_row["id"],
+                    "player_id": p["id"],
+                    "player_name": p["name"],
+                    "team": p["team"]
+                })
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "created_count": len(rows),
+        "payments": rows
+    }
 
 
 @app.put("/api/admin/payments/{payment_id}/status")

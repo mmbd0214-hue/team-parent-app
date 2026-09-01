@@ -100,7 +100,26 @@
 
 <dialog id="paymentDialog"><form id="paymentForm">
 <h2>新增收費</h2>
-<label>球員<select id="paymentPlayerInput"></select></label>
+<label>收費對象
+<select id="paymentTargetType">
+  <option value="all">全部球員</option>
+  <option value="team">依組別</option>
+  <option value="player">單一球員</option>
+</select>
+</label>
+
+<label id="paymentTeamWrap" class="hidden">組別
+<select id="paymentTeamInput">
+  <option value="U10">U10</option>
+  <option value="U12">U12</option>
+  <option value="U13">U13</option>
+  <option value="U15">U15</option>
+</select>
+</label>
+
+<label id="paymentPlayerWrap" class="hidden">球員
+<select id="paymentPlayerInput"></select>
+</label>
 <label>項目<input id="paymentTitleInput" required></label>
 <div class="grid2"><label>金額<input id="paymentAmountInput" type="number" min="0" required></label><label>期限<input id="paymentDueInput" type="date"></label></div>
 <label>備註<textarea id="paymentNoteInput"></textarea></label>
