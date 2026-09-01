@@ -1021,6 +1021,82 @@ def update_payment_status(
     return row
 
 
+@app.delete("/api/admin/players/{player_id}")
+def delete_player(
+    player_id: int,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,name,team
+                FROM players
+                WHERE id=%s
+            """, (player_id,))
+            player = cur.fetchone()
+
+            if not player:
+                raise HTTPException(404, "找不到球員")
+
+            # Related rows are removed automatically by FK ON DELETE CASCADE:
+            # parent_players, event_players, attendance, payments
+            cur.execute("""
+                DELETE FROM players
+                WHERE id=%s
+            """, (player_id,))
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "deleted": {
+            "id": player["id"],
+            "name": player["name"],
+            "team": player["team"],
+        }
+    }
+
+
+@app.delete("/api/admin/events/{event_id}")
+def delete_event(
+    event_id: int,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,title,event_date::text
+                FROM events
+                WHERE id=%s
+            """, (event_id,))
+            event = cur.fetchone()
+
+            if not event:
+                raise HTTPException(404, "找不到活動")
+
+            # Related rows are removed automatically by FK ON DELETE CASCADE:
+            # event_players, attendance, notification_logs
+            cur.execute("""
+                DELETE FROM events
+                WHERE id=%s
+            """, (event_id,))
+
+        conn.commit()
+
+    return {
+        "ok": True,
+        "deleted": {
+            "id": event["id"],
+            "title": event["title"],
+            "event_date": event["event_date"],
+        }
+    }
+
+
 # ---------------- LINE notification ----------------
 
 def notification_targets(event_id: int, mode: str = "all", primary_only: bool = False):

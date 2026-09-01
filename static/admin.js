@@ -12,7 +12,7 @@ document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showPage(b.data
 async function loadAll(){await Promise.all([loadPlayers(),loadParents(),loadEvents(),loadPayments(),loadDashboard()])}
 async function loadDashboard(){const d=await api("/api/admin/dashboard");$("stats").innerHTML=[["球員",d.players],["家長",d.parents],["未綁定家長",d.unbound_parents],["近期活動",d.events],["未回覆",d.pending_replies],["未收款",fmtMoney(d.unpaid)]].map(x=>`<div class="stat"><div class="l">${x[0]}</div><div class="k">${x[1]}</div></div>`).join("")}
 
-async function loadPlayers(){cache.players=await api("/api/admin/players");$("playerTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>背號</th><th>姓名</th><th>組別</th><th>綁定碼</th><th>家長</th><th>狀態</th><th>操作</th></tr></thead><tbody>${cache.players.map(p=>`<tr><td>${p.number||"-"}</td><td><strong>${p.name}</strong></td><td>${p.team}</td><td><code class="bindCode">${p.bind_code||"-"}</code><div class="muted">${p.linked_parent_count}/${p.max_parents} 位家長</div></td><td>${(p.parents||[]).map(x=>`<span class="tag">${x.display_name}</span>`).join("")||"-"}</td><td><span class="tag ${p.active?"green":"red"}">${p.active?"啟用":"停用"}</span></td><td><div class="rowActions"><button onclick="copyCode('${p.bind_code}')">複製碼</button><button onclick="resetCode(${p.id})">重設碼</button><button onclick="openPlayer(${p.id})">編輯</button><button onclick="openBind(null,${p.id})">綁家長</button></div></td></tr>`).join("")}</tbody></table></div>`}
+async function loadPlayers(){cache.players=await api("/api/admin/players");$("playerTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>背號</th><th>姓名</th><th>組別</th><th>綁定碼</th><th>家長</th><th>狀態</th><th>操作</th></tr></thead><tbody>${cache.players.map(p=>`<tr><td>${p.number||"-"}</td><td><strong>${p.name}</strong></td><td>${p.team}</td><td><code class="bindCode">${p.bind_code||"-"}</code><div class="muted">${p.linked_parent_count}/${p.max_parents} 位家長</div></td><td>${(p.parents||[]).map(x=>`<span class="tag">${x.display_name}</span>`).join("")||"-"}</td><td><span class="tag ${p.active?"green":"red"}">${p.active?"啟用":"停用"}</span></td><td><div class="rowActions"><button onclick="copyCode('${p.bind_code}')">複製碼</button><button onclick="resetCode(${p.id})">重設碼</button><button onclick="openPlayer(${p.id})">編輯</button><button onclick="openBind(null,${p.id})">綁家長</button><button onclick="deletePlayer(${p.id}, '${p.name.replace(/'/g, "\\'")}')">刪除</button></div></td></tr>`).join("")}</tbody></table></div>`}
 window.copyCode=async c=>{try{await navigator.clipboard.writeText(c);toast("綁定碼已複製")}catch{toast(`綁定碼：${c}`)}};
 window.resetCode=async id=>{if(!confirm("重設後舊綁定碼會立即失效，確定嗎？"))return;const r=await api(`/api/admin/players/${id}/reset-bind-code`,{method:"POST"});toast(`新綁定碼：${r.bind_code}`);await loadPlayers()};
 window.openPlayer=id=>{const p=id?cache.players.find(x=>x.id===id):null;$("playerDialogTitle").textContent=p?"編輯球員":"新增球員";$("playerId").value=p?.id||"";$("playerNameInput").value=p?.name||"";$("playerTeamInput").value=p?.team||"";$("playerNumberInput").value=p?.number||"";$("playerMaxParentsInput").value=p?.max_parents||2;$("playerActiveInput").checked=p?.active??true;playerDialog.showModal()};
@@ -25,7 +25,7 @@ window.openBind=(pa,pl)=>{$("bindParentSelect").innerHTML=cache.parents.map(x=>`
 $("bindForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/admin/bind",{method:"POST",body:JSON.stringify({parent_id:Number($("bindParentSelect").value),player_id:Number($("bindPlayerSelect").value)})});bindDialog.close();toast("綁定完成");await Promise.all([loadPlayers(),loadParents(),loadDashboard()])}catch(e){toast(e.message)}};
 window.unbind=async(pa,pl)=>{if(!confirm("確定解除綁定？"))return;await api(`/api/admin/bind?parent_id=${pa}&player_id=${pl}`,{method:"DELETE"});await Promise.all([loadPlayers(),loadParents(),loadDashboard()]);toast("已解除綁定")};
 
-async function loadEvents(){cache.events=await api("/api/admin/events");$("eventTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>日期</th><th>活動</th><th>類型</th><th>通知對象</th><th>回覆</th><th>出席</th><th>請假</th><th>餐點</th><th>操作</th></tr></thead><tbody>${cache.events.map(e=>`<tr><td>${e.event_date}</td><td><strong>${e.title}</strong><div>${e.location}</div></td><td><span class="tag">${e.event_type==="game"?"比賽":e.event_type==="practice"?"練球":"活動"}</span></td><td>${e.invited} 位球員</td><td>${e.replied}/${e.invited} <span class="tag ${Number(e.replied)<Number(e.invited)?"amber":"green"}">${Number(e.invited)-Number(e.replied)} 未回覆</span></td><td>${e.attend}</td><td>${e.leave}</td><td>${e.meals} 份</td><td><div class="rowActions"><button onclick="viewEvent(${e.id})">統計 / 通知</button><button onclick="editEvent(${e.id})">編輯</button></div></td></tr>`).join("")}</tbody></table></div>`}
+async function loadEvents(){cache.events=await api("/api/admin/events");$("eventTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>日期</th><th>活動</th><th>類型</th><th>通知對象</th><th>回覆</th><th>出席</th><th>請假</th><th>餐點</th><th>操作</th></tr></thead><tbody>${cache.events.map(e=>`<tr><td>${e.event_date}</td><td><strong>${e.title}</strong><div>${e.location}</div></td><td><span class="tag">${e.event_type==="game"?"比賽":e.event_type==="practice"?"練球":"活動"}</span></td><td>${e.invited} 位球員</td><td>${e.replied}/${e.invited} <span class="tag ${Number(e.replied)<Number(e.invited)?"amber":"green"}">${Number(e.invited)-Number(e.replied)} 未回覆</span></td><td>${e.attend}</td><td>${e.leave}</td><td>${e.meals} 份</td><td><div class="rowActions"><button onclick="viewEvent(${e.id})">統計 / 通知</button><button onclick="editEvent(${e.id})">編輯</button><button onclick="deleteEvent(${e.id}, '${e.title.replace(/'/g, "\\'")}')">刪除</button></div></td></tr>`).join("")}</tbody></table></div>`}
 function renderEventPlayers(sel=[]){const s=new Set(sel.map(Number));$("eventPlayerChoices").innerHTML=cache.players.filter(p=>p.active).map(p=>`<label class="choice"><input type="checkbox" value="${p.id}" ${s.has(Number(p.id))?"checked":""}> ${p.name}/${p.team}${p.number?` #${p.number}`:""}</label>`).join("")}
 window.toggleAllPlayers=v=>document.querySelectorAll("#eventPlayerChoices input").forEach(x=>x.checked=v);
 window.openEvent=()=>{$("adminEventForm").reset();$("editEventId").value="";$("eventDialogTitle").textContent="建立活動 / 比賽";$("eventStatusLabel").classList.add("hidden");$("eventMealInput").value=100;renderEventPlayers([]);eventDialog.showModal()};
@@ -45,3 +45,66 @@ $("paymentForm").onsubmit=async e=>{e.preventDefault();try{await api("/api/admin
 window.setPayment=async(id,status)=>{try{await api(`/api/admin/payments/${id}/status?status=${status}`,{method:"PUT"});toast("狀態已更新");await Promise.all([loadPayments(),loadDashboard()])}catch(e){toast(e.message)}};
 
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
+
+// === DELETE helpers to add into static/admin.js ===
+
+window.deletePlayer = async (id, name) => {
+  const p = cache.players.find(x => Number(x.id) === Number(id));
+  const linked = Number(p?.linked_parent_count || 0);
+
+  const msg =
+    `確定要永久刪除球員「${name}」嗎？\n\n` +
+    `此操作會一併刪除：\n` +
+    `• 家長綁定\n` +
+    `• 活動名單\n` +
+    `• 出席 / 請假紀錄\n` +
+    `• 訂餐紀錄\n` +
+    `• 繳費紀錄\n` +
+    (linked ? `\n目前綁定家長：${linked} 位\n` : "") +
+    `\n此操作無法復原。`;
+
+  if (!confirm(msg)) return;
+
+  try {
+    await api(`/api/admin/players/${id}`, {method:"DELETE"});
+    toast(`已刪除球員：${name}`);
+    await Promise.all([
+      loadPlayers(),
+      loadParents(),
+      loadEvents(),
+      loadPayments(),
+      loadDashboard()
+    ]);
+  } catch (e) {
+    toast(e.message);
+  }
+};
+
+
+window.deleteEvent = async (id, title) => {
+  const e = cache.events.find(x => Number(x.id) === Number(id));
+
+  const msg =
+    `確定要永久刪除活動「${title}」嗎？\n\n` +
+    `日期：${e?.event_date || "-"}\n` +
+    `此操作會一併刪除：\n` +
+    `• 活動指定球員\n` +
+    `• 出席 / 請假紀錄\n` +
+    `• 訂餐紀錄\n` +
+    `• LINE 通知紀錄\n\n` +
+    `此操作無法復原。`;
+
+  if (!confirm(msg)) return;
+
+  try {
+    await api(`/api/admin/events/${id}`, {method:"DELETE"});
+    toast(`已刪除活動：${title}`);
+    await Promise.all([
+      loadEvents(),
+      loadDashboard()
+    ]);
+  } catch (e) {
+    toast(e.message);
+  }
+};
+
