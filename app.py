@@ -384,8 +384,14 @@ def parent_events(authorization: str | None = Header(default=None)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT DISTINCT
-                    e.id,e.title,e.event_date::text,e.location,e.meal_price,
-                    e.status,e.event_type,e.response_deadline::text
+                    e.id,
+                    e.title,
+                    e.event_date,
+                    e.location,
+                    e.meal_price,
+                    e.status,
+                    e.event_type,
+                    e.response_deadline
                 FROM events e
                 JOIN event_players ep ON ep.event_id=e.id
                 JOIN parent_players pp ON pp.player_id=ep.player_id
@@ -393,7 +399,19 @@ def parent_events(authorization: str | None = Header(default=None)):
                   AND e.event_date >= %s
                 ORDER BY e.event_date
             """, (p["id"], date.today()))
-            return cur.fetchall()
+
+            rows = cur.fetchall()
+
+    return [
+        {
+            **row,
+            "event_date": row["event_date"].isoformat()
+                if row["event_date"] else None,
+            "response_deadline": row["response_deadline"].isoformat()
+                if row["response_deadline"] else None,
+        }
+        for row in rows
+    ]
 
 
 @app.get("/api/players/{player_id}/attendance")
