@@ -119,8 +119,14 @@ $("paymentForm").onsubmit=async e=>{
     const targetType=$("paymentTargetType").value;
     let targetValue=null;
 
+    let targetValues=[];
+
     if(targetType==="team"){
-      targetValue=$("paymentTeamInput").value;
+      targetValues=[...document.querySelectorAll('input[name="paymentTeam"]:checked')].map(x=>x.value);
+      if(!targetValues.length){
+        toast("請至少選擇一個組別");
+        return;
+      }
     }else if(targetType==="player"){
       targetValue=$("paymentPlayerInput").value;
     }
@@ -130,6 +136,7 @@ $("paymentForm").onsubmit=async e=>{
       body:JSON.stringify({
         target_type:targetType,
         target_value:targetValue,
+        target_values:targetValues,
         title:$("paymentTitleInput").value,
         amount:Number($("paymentAmountInput").value),
         due_date:$("paymentDueInput").value||null,

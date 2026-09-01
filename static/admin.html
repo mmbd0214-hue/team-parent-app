@@ -108,14 +108,15 @@
 </select>
 </label>
 
-<label id="paymentTeamWrap" class="hidden">組別
-<select id="paymentTeamInput">
-  <option value="U10">U10</option>
-  <option value="U12">U12</option>
-  <option value="U13">U13</option>
-  <option value="U15">U15</option>
-</select>
-</label>
+<div id="paymentTeamWrap" class="hidden">
+  <label>組別（可複選）</label>
+  <div class="recipientList">
+    <label class="check"><input type="checkbox" name="paymentTeam" value="U10"> U10</label>
+    <label class="check"><input type="checkbox" name="paymentTeam" value="U12"> U12</label>
+    <label class="check"><input type="checkbox" name="paymentTeam" value="U13"> U13</label>
+    <label class="check"><input type="checkbox" name="paymentTeam" value="U15"> U15</label>
+  </div>
+</div>
 
 <label id="paymentPlayerWrap" class="hidden">球員
 <select id="paymentPlayerInput"></select>

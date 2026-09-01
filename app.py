@@ -619,6 +619,7 @@ class PaymentIn(BaseModel):
 class PaymentBatchIn(BaseModel):
     target_type: str
     target_value: str | None = None
+    target_values: list[str] = []
     title: str
     amount: int
     due_date: str | None = None
@@ -1081,14 +1082,19 @@ def create_payment_batch(
                     ORDER BY team,name
                 """)
             elif body.target_type == "team":
-                if not body.target_value:
-                    raise HTTPException(400, "缺少組別")
+                teams = body.target_values or ([body.target_value] if body.target_value else [])
+                allowed_teams = {"U10", "U12", "U13", "U15"}
+                teams = [t for t in teams if t in allowed_teams]
+
+                if not teams:
+                    raise HTTPException(400, "請至少選擇一個組別")
+
                 cur.execute("""
                     SELECT id,name,team
                     FROM players
-                    WHERE active=TRUE AND team=%s
-                    ORDER BY name
-                """, (body.target_value,))
+                    WHERE active=TRUE AND team = ANY(%s)
+                    ORDER BY team,name
+                """, (teams,))
             else:
                 try:
                     player_id = int(body.target_value or "")
