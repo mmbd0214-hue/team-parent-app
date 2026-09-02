@@ -33,3 +33,25 @@ textarea{width:100%;border:1px solid #dce1dc;border-radius:12px;padding:10px}.me
 .googleVolunteerCard h3{font-size:22px;margin:6px 0 10px}
 .googleVolunteerCard p{line-height:1.6}
 .googleVolunteerCard .primary{max-width:none;margin-top:16px}
+
+#installAppCard h3{margin-top:0}
+.installHelp{
+  margin-top:12px;
+  padding:12px 14px;
+  background:#f7f9f7;
+  border-radius:12px;
+  text-align:left;
+}
+.installHelp ol{
+  margin:8px 0 0;
+  padding-left:20px;
+  line-height:1.8;
+}
+.installDone{
+  margin-top:10px;
+  padding:11px 12px;
+  background:#e7f5ea;
+  color:#266938;
+  border-radius:12px;
+  font-weight:700;
+}

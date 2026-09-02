@@ -292,4 +292,77 @@ if(openVolunteerBtn){
   openVolunteerBtn.onclick=openGoogleVolunteerApp;
 }
 
+
+let deferredInstallPrompt=null;
+
+function isIosDevice(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+function isStandaloneMode(){
+  return window.matchMedia("(display-mode: standalone)").matches ||
+         window.navigator.standalone === true;
+}
+
+function updateInstallUI(){
+  const btn=$("installPwaBtn");
+  const ios=$("iosInstallHelp");
+  const done=$("installedNotice");
+  if(!btn || !ios || !done)return;
+
+  btn.classList.add("hidden");
+  ios.classList.add("hidden");
+  done.classList.add("hidden");
+
+  if(isStandaloneMode()){
+    done.classList.remove("hidden");
+    return;
+  }
+
+  if(deferredInstallPrompt){
+    btn.classList.remove("hidden");
+    return;
+  }
+
+  if(isIosDevice()){
+    ios.classList.remove("hidden");
+  }
+}
+
+window.addEventListener("beforeinstallprompt",e=>{
+  e.preventDefault();
+  deferredInstallPrompt=e;
+  updateInstallUI();
+});
+
+window.addEventListener("appinstalled",()=>{
+  deferredInstallPrompt=null;
+  toast("青山棒球 APP 已安裝");
+  updateInstallUI();
+});
+
+const installPwaBtn=$("installPwaBtn");
+if(installPwaBtn){
+  installPwaBtn.onclick=async()=>{
+    if(!deferredInstallPrompt){
+      updateInstallUI();
+      return;
+    }
+
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt=null;
+    updateInstallUI();
+  };
+}
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>{
+    navigator.serviceWorker.register("/service-worker.js")
+      .catch(err=>console.warn("Service worker registration failed:",err));
+  });
+}
+
+window.addEventListener("load",updateInstallUI);
+
 start();

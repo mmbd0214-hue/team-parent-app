@@ -257,6 +257,23 @@ def admin_page():
     return FileResponse(os.path.join(BASE, "static", "admin.html"))
 
 
+
+@app.get("/manifest.webmanifest")
+def manifest_file():
+    return FileResponse(
+        os.path.join(BASE, "static", "manifest.webmanifest"),
+        media_type="application/manifest+json"
+    )
+
+
+@app.get("/service-worker.js")
+def service_worker_file():
+    return FileResponse(
+        os.path.join(BASE, "static", "service-worker.js"),
+        media_type="application/javascript"
+    )
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

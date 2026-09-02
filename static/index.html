@@ -3,7 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>球隊家長 App</title>
+  <title>青山社區棒球隊家長 APP</title>
+  <meta name="theme-color" content="#183f2b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="青山棒球">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
@@ -100,7 +106,28 @@
         <button id="extraPreviewBindBtn" class="primary">查詢球員</button>
         <div id="extraBindPreview" class="hidden"></div>
       </div>
-    </section>
+    
+      <div id="installAppCard" class="card">
+        <h3>📲 加到手機桌面</h3>
+        <p class="muted">之後可以像一般 App 一樣，直接從手機桌面開啟球隊家長系統。</p>
+
+        <button id="installPwaBtn" class="primary hidden">安裝青山棒球 APP</button>
+
+        <div id="iosInstallHelp" class="installHelp hidden">
+          <strong>iPhone / iPad</strong>
+          <ol>
+            <li>請用 Safari 開啟球隊 APP 網址</li>
+            <li>點下方「分享」按鈕</li>
+            <li>選擇「加入主畫面」</li>
+            <li>按右上角「加入」</li>
+          </ol>
+        </div>
+
+        <div id="installedNotice" class="installDone hidden">
+          ✅ 已經以 App 模式開啟
+        </div>
+      </div>
+</section>
   </main>
 
   <nav>
