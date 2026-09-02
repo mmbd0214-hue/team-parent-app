@@ -1471,7 +1471,10 @@ async def send_admin_message(
     if not recipients:
         raise HTTPException(404, "沒有符合條件的家長")
 
+    # 同一次群發共用同一個 batch_id，後台只顯示一筆摘要
+    batch_id = secrets.token_hex(12)
     results = []
+
     for recipient in recipients:
         ok, error = await push_text_message(recipient["line_user_id"], message)
         results.append({
@@ -1522,30 +1525,57 @@ def admin_message_logs(
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                WITH grouped AS (
+                WITH source AS (
                     SELECT
-                        COALESCE(batch_id, 'legacy-' || id::text) AS group_id,
-                        MIN(sent_at) AS sent_at,
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || COALESCE(target_type,'') ||
+                                ':' || COALESCE(target_label,'') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END AS group_id,
+                        sent_at,
                         target_type,
                         target_label,
                         message_text,
+                        status
+                    FROM message_logs
+                    WHERE NOT (
+                        target_type='parent'
+                        AND target_label='單一家長'
+                    )
+                ),
+                grouped AS (
+                    SELECT
+                        group_id,
+                        MIN(sent_at) AS sent_at,
+                        MAX(target_type) AS target_type,
+                        MAX(target_label) AS target_label,
+                        MAX(message_text) AS message_text,
                         COUNT(*) AS recipient_count,
                         COUNT(*) FILTER (WHERE status='sent') AS sent_count,
                         COUNT(*) FILTER (WHERE status='failed') AS failed_count
-                    FROM message_logs
-                    GROUP BY
-                        COALESCE(batch_id, 'legacy-' || id::text),
-                        target_type,
-                        target_label,
-                        message_text
+                    FROM source
+                    GROUP BY group_id
                 )
-                SELECT *
+                SELECT
+                    group_id,
+                    sent_at,
+                    target_type,
+                    target_label,
+                    message_text,
+                    recipient_count,
+                    sent_count,
+                    failed_count
                 FROM grouped
                 ORDER BY sent_at DESC
                 LIMIT %s
             """, (limit,))
-            return cur.fetchall()
 
+            return cur.fetchall()
 
 
 @app.get("/api/admin/messages/conversations")
