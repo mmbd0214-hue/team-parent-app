@@ -498,8 +498,9 @@ def parent_announcements(
 
     with db() as conn:
         with conn.cursor() as cur:
+            # 目前家長所綁定球員的組別
             cur.execute("""
-                SELECT p.team
+                SELECT DISTINCT p.team
                 FROM parent_players pp
                 JOIN players p ON p.id=pp.player_id
                 WHERE pp.parent_id=%s
@@ -507,6 +508,12 @@ def parent_announcements(
             """, (parent["id"],))
             teams = {r["team"] for r in cur.fetchall()}
 
+            result = []
+            seen = set()
+
+            # -------------------------------------------------
+            # A. 正式 announcements
+            # -------------------------------------------------
             cur.execute("""
                 SELECT
                     a.id,
@@ -518,29 +525,207 @@ def parent_announcements(
                 FROM announcements a
                 WHERE a.active=TRUE
                 ORDER BY a.created_at DESC,a.id DESC
-                LIMIT 200
+                LIMIT 300
             """)
             rows = cur.fetchall()
 
-            visible = []
             for row in rows:
                 target_type = row["target_type"]
                 target_values = row["target_values"] or []
 
+                visible = False
+
                 if target_type == "all":
-                    visible.append(row)
+                    visible = True
+
+                elif target_type == "team":
+                    visible = any(team in teams for team in target_values)
+
+                elif target_type == "parent":
+                    visible = str(parent["id"]) in [str(x) for x in target_values]
+
+                if not visible:
                     continue
 
-                if target_type == "team":
-                    if any(team in teams for team in target_values):
-                        visible.append(row)
+                key = (
+                    row["message_text"],
+                    target_type,
+                    row["created_at"].date() if row["created_at"] else None,
+                )
+
+                seen.add(key)
+                result.append({
+                    "id": f"a-{row['id']}",
+                    "title": row["title"],
+                    "message_text": row["message_text"],
+                    "target_type": target_type,
+                    "target_values": target_values,
+                    "created_at": row["created_at"],
+                    "source": "announcement",
+                })
+
+            # -------------------------------------------------
+            # B. 歷史 message_logs
+            # 直接即時合併，不再依賴 startup backfill。
+            # -------------------------------------------------
+
+            # B1. 全部 / 組別群發
+            cur.execute("""
+                WITH grouped AS (
+                    SELECT
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || COALESCE(target_type,'') ||
+                                ':' || COALESCE(target_label,'') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END AS group_id,
+                        MIN(sent_at) AS sent_at,
+                        MAX(target_type) AS target_type,
+                        MAX(target_label) AS target_label,
+                        MAX(message_text) AS message_text
+                    FROM message_logs
+                    WHERE target_type IN ('all','team')
+                    GROUP BY
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || COALESCE(target_type,'') ||
+                                ':' || COALESCE(target_label,'') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END
+                )
+                SELECT *
+                FROM grouped
+                ORDER BY sent_at DESC
+                LIMIT 300
+            """)
+            logs = cur.fetchall()
+
+            allowed_teams = {"U10", "U12", "U13", "U15"}
+
+            for row in logs:
+                target_type = row["target_type"]
+                target_values = []
+
+                if target_type == "all":
+                    visible = True
+
+                else:
+                    label = row["target_label"] or ""
+                    normalized = (
+                        label.replace(",", "、")
+                             .replace("，", "、")
+                             .replace("/", "、")
+                             .replace(" ", "、")
+                    )
+                    target_values = [
+                        x for x in normalized.split("、")
+                        if x in allowed_teams
+                    ]
+
+                    # 某些舊紀錄 target_label 可能格式不固定，
+                    # 再直接從字串搜尋 U10/U12/U13/U15。
+                    if not target_values:
+                        target_values = [
+                            t for t in allowed_teams
+                            if t in label
+                        ]
+
+                    visible = any(team in teams for team in target_values)
+
+                if not visible:
                     continue
 
-                if target_type == "parent":
-                    if str(parent["id"]) in [str(x) for x in target_values]:
-                        visible.append(row)
+                key = (
+                    row["message_text"],
+                    target_type,
+                    row["sent_at"].date() if row["sent_at"] else None,
+                )
 
-            return visible
+                if key in seen:
+                    continue
+
+                seen.add(key)
+                result.append({
+                    "id": row["group_id"],
+                    "title": "",
+                    "message_text": row["message_text"],
+                    "target_type": target_type,
+                    "target_values": target_values,
+                    "created_at": row["sent_at"],
+                    "source": "message_log",
+                })
+
+            # B2. 指定家長歷史訊息
+            # 只撈這個 parent_id 曾實際收到的群發。
+            cur.execute("""
+                WITH grouped AS (
+                    SELECT
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy-parent:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END AS group_id,
+                        MIN(sent_at) AS sent_at,
+                        MAX(message_text) AS message_text
+                    FROM message_logs
+                    WHERE parent_id=%s
+                      AND target_type='parent'
+                      AND COALESCE(target_label,'') <> '單一家長'
+                    GROUP BY
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy-parent:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END
+                )
+                SELECT *
+                FROM grouped
+                ORDER BY sent_at DESC
+                LIMIT 200
+            """, (parent["id"],))
+            parent_logs = cur.fetchall()
+
+            for row in parent_logs:
+                key = (
+                    row["message_text"],
+                    "parent",
+                    row["sent_at"].date() if row["sent_at"] else None,
+                )
+
+                if key in seen:
+                    continue
+
+                seen.add(key)
+                result.append({
+                    "id": row["group_id"],
+                    "title": "",
+                    "message_text": row["message_text"],
+                    "target_type": "parent",
+                    "target_values": [str(parent["id"])],
+                    "created_at": row["sent_at"],
+                    "source": "message_log",
+                })
+
+            result.sort(
+                key=lambda x: x["created_at"],
+                reverse=True
+            )
+
+            return result[:300]
 
 
 # ---------------- Parent self binding ----------------
@@ -2055,6 +2240,35 @@ async def reply_admin_conversation(
 
     return {"ok": True}
 
+
+
+@app.get("/api/admin/announcements/diagnostics")
+def announcement_diagnostics(
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) n FROM announcements")
+            announcements_count = cur.fetchone()["n"]
+
+            cur.execute("SELECT COUNT(*) n FROM message_logs")
+            message_logs_count = cur.fetchone()["n"]
+
+            cur.execute("""
+                SELECT target_type,COUNT(*) n
+                FROM message_logs
+                GROUP BY target_type
+                ORDER BY target_type
+            """)
+            message_types = cur.fetchall()
+
+    return {
+        "announcements": announcements_count,
+        "message_logs": message_logs_count,
+        "message_types": message_types,
+    }
 
 
 @app.get("/api/admin/announcements")
