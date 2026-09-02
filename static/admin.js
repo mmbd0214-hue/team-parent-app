@@ -311,6 +311,124 @@ $("sendMessageBtn").onclick=async()=>{
 };
 
 
+
+let activeConversationUserId=null;
+
+async function loadConversations(){
+  if(!$("conversationList"))return;
+
+  try{
+    const rows=await api("/api/admin/messages/conversations");
+
+    $("conversationList").innerHTML=rows.map(r=>{
+      const players=(r.players||[]).map(p=>`${p.name}/${p.team}`).join("、");
+      const unread=Number(r.unread_count||0);
+
+      return `
+        <button class="conversationItem ${activeConversationUserId===r.line_user_id?"active":""}"
+                onclick="openConversation('${r.line_user_id}')">
+          <div class="conversationItemTop">
+            <strong>${r.display_name}</strong>
+            ${unread?`<span class="unreadBadge">${unread}</span>`:""}
+          </div>
+          <div class="muted">${players||"尚未綁定球員"}</div>
+          <div class="conversationTime">${new Date(r.last_message_at).toLocaleString("zh-TW")}</div>
+        </button>`;
+    }).join("") || `<div class="muted">目前沒有家長回覆</div>`;
+
+  }catch(e){
+    $("conversationList").innerHTML=`<div class="error">${e.message}</div>`;
+  }
+}
+
+window.openConversation=async(lineUserId)=>{
+  try{
+    activeConversationUserId=lineUserId;
+
+    await api(`/api/admin/messages/conversation/${encodeURIComponent(lineUserId)}/read`,{
+      method:"POST"
+    });
+
+    const d=await api(`/api/admin/messages/conversation/${encodeURIComponent(lineUserId)}`);
+
+    $("conversationEmpty").classList.add("hidden");
+    $("conversationDetail").classList.remove("hidden");
+
+    $("conversationParentName").textContent=d.parent?.display_name||"未登錄 LINE 使用者";
+    $("conversationPlayers").innerHTML=
+      (d.players||[]).map(p=>`<span class="tag">${p.name}/${p.team}</span>`).join("") ||
+      `<span class="tag amber">尚未綁定球員</span>`;
+
+    $("conversationMessages").innerHTML=(d.messages||[]).map(m=>{
+      const outgoing=m.direction==="out";
+      const body=m.message_type==="text"
+        ? (m.message_text||"")
+        : `[${m.message_type} 訊息]`;
+
+      return `
+        <div class="chatRow ${outgoing?"out":"in"}">
+          <div class="chatBubble">
+            <div class="chatText">${escapeHtml(body).replace(/\n/g,"<br>")}</div>
+            <div class="chatMeta">
+              ${new Date(m.message_at).toLocaleString("zh-TW")}
+              ${outgoing&&m.status?` · ${m.status==="sent"?"已送出":"失敗"}`:""}
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+
+    $("conversationMessages").scrollTop=$("conversationMessages").scrollHeight;
+
+    await loadConversations();
+
+  }catch(e){
+    toast(e.message);
+  }
+};
+
+function escapeHtml(text){
+  return String(text??"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
+$("conversationReplyBtn").onclick=async()=>{
+  if(!activeConversationUserId){
+    return toast("請先選擇家長");
+  }
+
+  const message=$("conversationReplyText").value.trim();
+  if(!message){
+    return toast("請輸入回覆內容");
+  }
+
+  try{
+    $("conversationReplyBtn").disabled=true;
+    $("conversationReplyBtn").textContent="發送中...";
+
+    await api(`/api/admin/messages/conversation/${encodeURIComponent(activeConversationUserId)}/reply`,{
+      method:"POST",
+      body:JSON.stringify({message})
+    });
+
+    $("conversationReplyText").value="";
+    toast("已回覆家長");
+    await openConversation(activeConversationUserId);
+
+  }catch(e){
+    toast(e.message);
+  }finally{
+    $("conversationReplyBtn").disabled=false;
+    $("conversationReplyBtn").textContent="回覆家長";
+  }
+};
+
+$("refreshConversationsBtn").onclick=loadConversations;
+
+
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
 
 // === DELETE helpers to add into static/admin.js ===

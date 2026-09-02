@@ -98,6 +98,40 @@
       <div id="messageLogs"></div>
     </div>
   </div>
+
+  <div class="panel conversationPanel">
+    <div class="toolbar">
+      <div>
+        <h3>家長回覆 / 對話</h3>
+        <p class="muted">家長直接回覆「青山社區棒球隊小幫手」後會出現在這裡。</p>
+      </div>
+      <button id="refreshConversationsBtn" class="ghost">重新整理</button>
+    </div>
+
+    <div class="conversationLayout">
+      <div id="conversationList" class="conversationList"></div>
+
+      <div id="conversationEmpty" class="conversationEmpty">
+        選擇左側家長查看對話
+      </div>
+
+      <div id="conversationDetail" class="conversationDetail hidden">
+        <div class="conversationHeader">
+          <div>
+            <h3 id="conversationParentName">—</h3>
+            <div id="conversationPlayers" class="recipientList"></div>
+          </div>
+        </div>
+
+        <div id="conversationMessages" class="conversationMessages"></div>
+
+        <div class="replyBox">
+          <textarea id="conversationReplyText" rows="3" placeholder="輸入回覆內容"></textarea>
+          <button id="conversationReplyBtn">回覆家長</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
 
 </main>

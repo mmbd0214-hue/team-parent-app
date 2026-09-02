@@ -1,12 +1,16 @@
 
 import os
 import secrets
+import base64
+import hashlib
+import hmac
+import json
 from datetime import date
 
 import httpx
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,6 +20,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 MOCK_LOGIN = os.getenv("MOCK_LOGIN", "0") == "1"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me-now")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
 LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
 
@@ -161,6 +166,24 @@ def init_db():
                 sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS inbound_messages (
+                id BIGSERIAL PRIMARY KEY,
+                parent_id BIGINT REFERENCES parents(id) ON DELETE SET NULL,
+                line_user_id TEXT NOT NULL,
+                message_type TEXT NOT NULL DEFAULT 'text',
+                message_text TEXT DEFAULT '',
+                is_read BOOLEAN NOT NULL DEFAULT FALSE,
+                received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
+
+            cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_inbound_messages_parent
+            ON inbound_messages(parent_id, received_at DESC)
+            """)
+
 
 
             # legacy events without event_players -> assign all active players once
@@ -1248,6 +1271,84 @@ def delete_payment(
 
 
 
+
+def verify_line_signature(raw_body: bytes, signature: str | None):
+    if not LINE_CHANNEL_SECRET:
+        raise HTTPException(503, "LINE_CHANNEL_SECRET 尚未設定")
+
+    if not signature:
+        raise HTTPException(400, "缺少 LINE Signature")
+
+    digest = hmac.new(
+        LINE_CHANNEL_SECRET.encode("utf-8"),
+        raw_body,
+        hashlib.sha256
+    ).digest()
+
+    expected = base64.b64encode(digest).decode("utf-8")
+
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(400, "LINE Signature 驗證失敗")
+
+
+@app.post("/line/webhook")
+async def line_webhook(
+    request: Request,
+    x_line_signature: str | None = Header(default=None)
+):
+    raw_body = await request.body()
+    verify_line_signature(raw_body, x_line_signature)
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Webhook JSON 格式錯誤")
+
+    events = payload.get("events", [])
+
+    for event in events:
+        event_type = event.get("type")
+        source = event.get("source") or {}
+        line_user_id = source.get("userId")
+
+        if not line_user_id:
+            continue
+
+        # 收家長文字回覆
+        if event_type == "message":
+            message = event.get("message") or {}
+            message_type = message.get("type", "unknown")
+            message_text = message.get("text", "") if message_type == "text" else ""
+
+            with db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id FROM parents WHERE line_user_id=%s",
+                        (line_user_id,)
+                    )
+                    parent = cur.fetchone()
+
+                    cur.execute("""
+                        INSERT INTO inbound_messages(
+                            parent_id,line_user_id,message_type,message_text,is_read
+                        )
+                        VALUES(%s,%s,%s,%s,FALSE)
+                    """, (
+                        parent["id"] if parent else None,
+                        line_user_id,
+                        message_type,
+                        message_text
+                    ))
+                conn.commit()
+
+        # 家長加好友時不強制建立 parents；
+        # 正式登入 LIFF 後會由 /api/auth/line 自動建立。
+        elif event_type == "follow":
+            pass
+
+    return {"ok": True}
+
+
 # ---------------- Admin message center ----------------
 
 def resolve_message_recipients(cur, target_type: str, target_values: list[str]):
@@ -1424,6 +1525,211 @@ def admin_message_logs(
                 LIMIT %s
             """, (limit,))
             return cur.fetchall()
+
+
+
+@app.get("/api/admin/messages/conversations")
+def admin_message_conversations(
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH inbound AS (
+                    SELECT
+                        im.line_user_id,
+                        MAX(im.received_at) AS last_inbound_at,
+                        COUNT(*) FILTER (WHERE im.is_read=FALSE) AS unread_count
+                    FROM inbound_messages im
+                    GROUP BY im.line_user_id
+                ),
+                outbound AS (
+                    SELECT
+                        ml.line_user_id,
+                        MAX(ml.sent_at) AS last_outbound_at
+                    FROM message_logs ml
+                    GROUP BY ml.line_user_id
+                ),
+                ids AS (
+                    SELECT line_user_id FROM inbound
+                    UNION
+                    SELECT line_user_id FROM outbound
+                )
+                SELECT
+                    ids.line_user_id,
+                    pa.id AS parent_id,
+                    COALESCE(pa.display_name,'未登錄 LINE 使用者') AS display_name,
+                    COALESCE(i.unread_count,0) AS unread_count,
+                    GREATEST(
+                        COALESCE(i.last_inbound_at, to_timestamp(0)),
+                        COALESCE(o.last_outbound_at, to_timestamp(0))
+                    ) AS last_message_at,
+                    COALESCE(
+                        (
+                            SELECT json_agg(
+                                json_build_object(
+                                    'id',p.id,
+                                    'name',p.name,
+                                    'team',p.team
+                                )
+                                ORDER BY p.team,p.name
+                            )
+                            FROM parent_players pp
+                            JOIN players p ON p.id=pp.player_id
+                            WHERE pp.parent_id=pa.id
+                        ),
+                        '[]'::json
+                    ) AS players
+                FROM ids
+                LEFT JOIN parents pa ON pa.line_user_id=ids.line_user_id
+                LEFT JOIN inbound i ON i.line_user_id=ids.line_user_id
+                LEFT JOIN outbound o ON o.line_user_id=ids.line_user_id
+                ORDER BY unread_count DESC,last_message_at DESC
+            """)
+            return cur.fetchall()
+
+
+@app.get("/api/admin/messages/conversation/{line_user_id}")
+def admin_message_conversation(
+    line_user_id: str,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,display_name
+                FROM parents
+                WHERE line_user_id=%s
+            """, (line_user_id,))
+            parent = cur.fetchone()
+
+            cur.execute("""
+                SELECT *
+                FROM (
+                    SELECT
+                        im.id,
+                        'in' AS direction,
+                        im.message_text AS message_text,
+                        im.message_type AS message_type,
+                        im.received_at AS message_at,
+                        im.is_read AS is_read,
+                        '' AS status,
+                        '' AS error_message
+                    FROM inbound_messages im
+                    WHERE im.line_user_id=%s
+
+                    UNION ALL
+
+                    SELECT
+                        ml.id,
+                        'out' AS direction,
+                        ml.message_text AS message_text,
+                        'text' AS message_type,
+                        ml.sent_at AS message_at,
+                        TRUE AS is_read,
+                        ml.status AS status,
+                        ml.error_message AS error_message
+                    FROM message_logs ml
+                    WHERE ml.line_user_id=%s
+                ) x
+                ORDER BY message_at,id
+            """, (line_user_id,line_user_id))
+            messages = cur.fetchall()
+
+            cur.execute("""
+                SELECT p.id,p.name,p.team
+                FROM parent_players pp
+                JOIN players p ON p.id=pp.player_id
+                JOIN parents pa ON pa.id=pp.parent_id
+                WHERE pa.line_user_id=%s
+                ORDER BY p.team,p.name
+            """, (line_user_id,))
+            players = cur.fetchall()
+
+    return {
+        "line_user_id": line_user_id,
+        "parent": parent,
+        "players": players,
+        "messages": messages,
+    }
+
+
+@app.post("/api/admin/messages/conversation/{line_user_id}/read")
+def mark_admin_conversation_read(
+    line_user_id: str,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE inbound_messages
+                SET is_read=TRUE
+                WHERE line_user_id=%s
+                  AND is_read=FALSE
+            """, (line_user_id,))
+        conn.commit()
+
+    return {"ok": True}
+
+
+class DirectReplyIn(BaseModel):
+    message: str
+
+
+@app.post("/api/admin/messages/conversation/{line_user_id}/reply")
+async def reply_admin_conversation(
+    line_user_id: str,
+    body: DirectReplyIn,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(400, "訊息內容不可空白")
+    if len(message) > 5000:
+        raise HTTPException(400, "訊息內容過長")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,display_name
+                FROM parents
+                WHERE line_user_id=%s
+            """, (line_user_id,))
+            parent = cur.fetchone()
+
+    ok, error = await push_text_message(line_user_id, message)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO message_logs(
+                    parent_id,line_user_id,recipient_name,
+                    target_type,target_label,message_text,
+                    status,error_message
+                )
+                VALUES(%s,%s,%s,'parent','單一家長',%s,%s,%s)
+            """, (
+                parent["id"] if parent else None,
+                line_user_id,
+                parent["display_name"] if parent else "未登錄 LINE 使用者",
+                message,
+                "sent" if ok else "failed",
+                error
+            ))
+        conn.commit()
+
+    if not ok:
+        raise HTTPException(502, error)
+
+    return {"ok": True}
 
 
 # ---------------- LINE notification ----------------
