@@ -1,7 +1,6 @@
 
-const CACHE_NAME = "qingshan-team-app-v3";
+const CACHE_NAME = "qingshan-team-app-20260902-announcements-v5";
 const APP_SHELL = [
-  "/",
   "/static/style.css",
   "/static/app.js",
   "/static/icons/icon-192.png",
