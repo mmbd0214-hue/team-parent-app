@@ -210,6 +210,14 @@ def init_db():
             """)
 
 
+            cur.execute("ALTER TABLE announcements ADD COLUMN IF NOT EXISTS source_key TEXT")
+            cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_announcements_source_key
+            ON announcements(source_key)
+            WHERE source_key IS NOT NULL
+            """)
+
+
             cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS batch_id TEXT")
 
 
@@ -231,6 +239,103 @@ def init_db():
             """)
 
 
+
+
+            # historical LINE messages -> App announcements
+            # 同一次群發只匯入一則公告；後台直接回覆單一家長的對話不匯入。
+            cur.execute("""
+                WITH grouped AS (
+                    SELECT
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || COALESCE(target_type,'') ||
+                                ':' || COALESCE(target_label,'') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END AS source_key,
+                        MIN(sent_at) AS created_at,
+                        MAX(target_type) AS target_type,
+                        MAX(target_label) AS target_label,
+                        MAX(message_text) AS message_text,
+                        ARRAY_REMOVE(ARRAY_AGG(DISTINCT parent_id), NULL) AS parent_ids
+                    FROM message_logs
+                    WHERE NOT (
+                        target_type='parent'
+                        AND target_label='單一家長'
+                    )
+                    GROUP BY
+                        CASE
+                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
+                                THEN 'batch:' || batch_id
+                            ELSE
+                                'legacy:' ||
+                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
+                                ':' || COALESCE(target_type,'') ||
+                                ':' || COALESCE(target_label,'') ||
+                                ':' || MD5(COALESCE(message_text,''))
+                        END
+                )
+                SELECT source_key,created_at,target_type,target_label,message_text,parent_ids
+                FROM grouped
+                ORDER BY created_at
+            """)
+            old_message_groups = cur.fetchall()
+
+            allowed_teams = {"U10", "U12", "U13", "U15"}
+
+            for old in old_message_groups:
+                # 如果新版功能已經曾同步過同一則公告，就不要再建立重複資料。
+                cur.execute("""
+                    SELECT 1
+                    FROM announcements
+                    WHERE message_text=%s
+                      AND target_type=%s
+                      AND ABS(EXTRACT(EPOCH FROM (created_at - %s))) < 300
+                    LIMIT 1
+                """, (
+                    old["message_text"],
+                    old["target_type"],
+                    old["created_at"],
+                ))
+                if cur.fetchone():
+                    continue
+
+                target_values = []
+
+                if old["target_type"] == "team":
+                    label = old["target_label"] or ""
+                    normalized = (
+                        label.replace(",", "、")
+                             .replace("，", "、")
+                             .replace(" ", "、")
+                    )
+                    target_values = [
+                        x for x in normalized.split("、")
+                        if x in allowed_teams
+                    ]
+
+                elif old["target_type"] == "parent":
+                    target_values = [
+                        str(pid) for pid in (old["parent_ids"] or [])
+                    ]
+
+                cur.execute("""
+                    INSERT INTO announcements(
+                        title,message_text,target_type,target_values,
+                        active,created_at,source_key
+                    )
+                    VALUES('',%s,%s,%s::jsonb,TRUE,%s,%s)
+                    ON CONFLICT DO NOTHING
+                """, (
+                    old["message_text"],
+                    old["target_type"],
+                    json.dumps(target_values, ensure_ascii=False),
+                    old["created_at"],
+                    old["source_key"],
+                ))
 
             # legacy events without event_players -> assign all active players once
             cur.execute("""
@@ -432,15 +537,7 @@ def parent_announcements(
                     continue
 
                 if target_type == "parent":
-                    cur.execute("""
-                        SELECT 1
-                        FROM message_logs ml
-                        WHERE ml.parent_id=%s
-                          AND ml.message_text=%s
-                          AND ml.target_type='parent'
-                        LIMIT 1
-                    """, (parent["id"], row["message_text"]))
-                    if cur.fetchone():
+                    if str(parent["id"]) in [str(x) for x in target_values]:
                         visible.append(row)
 
             return visible
@@ -1494,20 +1591,22 @@ def save_app_announcement(
     target_type: str,
     target_values: list[str],
     title: str = "",
+    source_key: str | None = None,
 ):
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO announcements(
-                    title,message_text,target_type,target_values,active
+                    title,message_text,target_type,target_values,active,source_key
                 )
-                VALUES(%s,%s,%s,%s::jsonb,TRUE)
+                VALUES(%s,%s,%s,%s::jsonb,TRUE,%s)
                 RETURNING id
             """, (
                 title.strip(),
                 message_text.strip(),
                 target_type,
                 json.dumps(target_values, ensure_ascii=False),
+                source_key,
             ))
             row = cur.fetchone()
         conn.commit()
@@ -1633,6 +1732,9 @@ async def send_admin_message(
     if not recipients:
         raise HTTPException(404, "沒有符合條件的家長")
 
+    # LINE 群發紀錄與 App 公告共用同一個 batch/source key
+    batch_id = secrets.token_hex(12)
+
     announcement_id = None
     if body.save_as_announcement:
         announcement_id = save_app_announcement(
@@ -1640,10 +1742,9 @@ async def send_admin_message(
             target_type=body.target_type,
             target_values=body.target_values,
             title=body.announcement_title,
+            source_key="batch:" + batch_id,
         )
 
-    # 同一次群發共用同一個 batch_id，後台只顯示一筆摘要
-    batch_id = secrets.token_hex(12)
     results = []
 
     for recipient in recipients:
