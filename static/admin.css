@@ -11,3 +11,18 @@ dialog{border:0;border-radius:20px;width:min(620px,calc(100% - 24px));padding:0;
 @media(max-width:850px){.app{grid-template-columns:1fr}aside{height:auto;position:sticky;z-index:5;padding:10px;display:flex;align-items:center;overflow:auto}.brand{padding:8px 12px;white-space:nowrap}nav{display:flex}nav button{white-space:nowrap}main{padding:16px}.stats{grid-template-columns:repeat(2,1fr)}.choices{grid-template-columns:1fr 1fr}}
 
 .matchHeader{display:flex;align-items:center;justify-content:space-between;margin-top:16px}.matchRows{display:grid;gap:10px;margin-top:8px}.matchRow{display:grid;grid-template-columns:80px 1fr 1fr 120px auto;gap:8px;align-items:end;background:#f7f9f7;border:1px solid var(--border);padding:10px;border-radius:12px}.matchRow label{margin:0}.matchNo{font-weight:800;align-self:center}.removeMatch{border:1px solid var(--border);background:white;border-radius:9px;padding:9px}.timeTbd{align-self:end;padding-bottom:8px}@media(max-width:700px){.matchRow{grid-template-columns:1fr}.timeTbd{padding-bottom:0}}
+
+.messageGrid{display:grid;grid-template-columns:minmax(340px,520px) minmax(0,1fr);gap:16px;align-items:start}
+.messageGrid .panel{margin-top:0}
+.messageGrid label{display:grid;gap:7px;margin:14px 0;font-weight:650}
+.messageGrid select,.messageGrid textarea{width:100%;padding:11px;border:1px solid var(--border);border-radius:10px;background:white}
+.messageChecks{display:flex;flex-wrap:wrap;gap:8px}
+.messageChecks .check,.parentChoices .check{display:flex;width:auto;margin:0;background:#f7f9f7;padding:9px 11px;border-radius:10px}
+.parentChoices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;max-height:260px;overflow:auto;border:1px solid var(--border);padding:10px;border-radius:12px}
+.messagePreviewBox{margin:14px 0;padding:12px;background:#f7f9f7;border-radius:12px}
+.messageCounter{text-align:right;color:var(--muted);font-size:12px;margin-top:-8px}
+.sendMessageBtn{width:100%;border:0;border-radius:11px;padding:13px 15px;background:var(--green);color:white;font-weight:800;margin-top:12px}
+.sendMessageBtn:disabled{opacity:.55;cursor:not-allowed}
+.messageLogText{max-width:320px;white-space:pre-wrap;word-break:break-word}
+@media(max-width:1000px){.messageGrid{grid-template-columns:1fr}}
+@media(max-width:650px){.parentChoices{grid-template-columns:1fr}}

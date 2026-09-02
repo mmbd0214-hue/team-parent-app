@@ -14,6 +14,7 @@
 <button data-page="parents">👨‍👩‍👧 家長</button>
 <button data-page="events">📅 活動 / 比賽</button>
 <button data-page="payments">💰 繳費</button>
+<button data-page="messages">📨 訊息中心</button>
 </nav></aside>
 
 <main>
@@ -43,6 +44,62 @@
   <div class="toolbar"><h2>繳費管理</h2><button onclick="openPayment()">＋ 新增收費</button></div>
   <div id="paymentTable"></div>
 </section>
+
+<section id="messages" class="page hidden">
+  <div class="toolbar">
+    <div>
+      <h2>LINE 訊息中心</h2>
+      <p class="muted">使用「青山社區棒球隊小幫手」主動發送訊息給家長。</p>
+    </div>
+  </div>
+
+  <div class="messageGrid">
+    <div class="panel">
+      <h3>建立訊息</h3>
+
+      <label>發送對象
+        <select id="messageTargetType">
+          <option value="all">全部家長</option>
+          <option value="team">依組別</option>
+          <option value="parent">指定家長</option>
+        </select>
+      </label>
+
+      <div id="messageTeamWrap" class="hidden">
+        <label>組別（可複選）</label>
+        <div class="messageChecks">
+          <label class="check"><input type="checkbox" name="messageTeam" value="U10"> U10</label>
+          <label class="check"><input type="checkbox" name="messageTeam" value="U12"> U12</label>
+          <label class="check"><input type="checkbox" name="messageTeam" value="U13"> U13</label>
+          <label class="check"><input type="checkbox" name="messageTeam" value="U15"> U15</label>
+        </div>
+      </div>
+
+      <div id="messageParentWrap" class="hidden">
+        <label>家長（可複選）</label>
+        <div id="messageParentChoices" class="parentChoices"></div>
+      </div>
+
+      <div class="messagePreviewBox">
+        <strong id="messageRecipientCount">預計發送：0 位家長</strong>
+        <div id="messageRecipientNames" class="recipientList"></div>
+      </div>
+
+      <label>訊息內容
+        <textarea id="messageText" rows="9" placeholder="輸入要發送給家長的 LINE 訊息"></textarea>
+      </label>
+
+      <div class="messageCounter"><span id="messageCharCount">0</span> / 5000</div>
+      <button id="sendMessageBtn" class="sendMessageBtn">📨 發送 LINE 訊息</button>
+    </div>
+
+    <div class="panel">
+      <h3>最近發送紀錄</h3>
+      <div id="messageLogs"></div>
+    </div>
+  </div>
+</section>
+
 </main>
 </div>
 

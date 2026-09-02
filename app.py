@@ -146,6 +146,22 @@ def init_db():
             )
             """)
 
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS message_logs (
+                id BIGSERIAL PRIMARY KEY,
+                parent_id BIGINT REFERENCES parents(id) ON DELETE SET NULL,
+                line_user_id TEXT,
+                recipient_name TEXT,
+                target_type TEXT NOT NULL,
+                target_label TEXT DEFAULT '',
+                message_text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_message TEXT DEFAULT '',
+                sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
+
+
             # legacy events without event_players -> assign all active players once
             cur.execute("""
                 INSERT INTO event_players(event_id, player_id)
@@ -630,6 +646,12 @@ class PaymentBatchIn(BaseModel):
 class NotifyIn(BaseModel):
     mode: str = "all"
     primary_only: bool = False
+
+
+class MessageSendIn(BaseModel):
+    target_type: str = "all"
+    target_values: list[str] = []
+    message: str
 
 
 # ---------------- Admin dashboard ----------------
@@ -1216,6 +1238,185 @@ def delete_payment(
             "team": payment["team"],
         }
     }
+
+
+
+# ---------------- Admin message center ----------------
+
+def resolve_message_recipients(cur, target_type: str, target_values: list[str]):
+    if target_type == "all":
+        cur.execute("""
+            SELECT DISTINCT pa.id,pa.line_user_id,pa.display_name
+            FROM parents pa
+            WHERE pa.line_user_id IS NOT NULL
+              AND BTRIM(pa.line_user_id) <> ''
+            ORDER BY pa.display_name
+        """)
+        return cur.fetchall(), "全部家長"
+
+    if target_type == "team":
+        allowed = {"U10", "U12", "U13", "U15"}
+        teams = [x for x in target_values if x in allowed]
+        if not teams:
+            raise HTTPException(400, "請至少選擇一個組別")
+
+        cur.execute("""
+            SELECT DISTINCT pa.id,pa.line_user_id,pa.display_name
+            FROM parents pa
+            JOIN parent_players pp ON pp.parent_id=pa.id
+            JOIN players p ON p.id=pp.player_id
+            WHERE p.active=TRUE
+              AND p.team = ANY(%s)
+              AND pa.line_user_id IS NOT NULL
+              AND BTRIM(pa.line_user_id) <> ''
+            ORDER BY pa.display_name
+        """, (teams,))
+        return cur.fetchall(), "、".join(teams)
+
+    if target_type == "parent":
+        parent_ids = []
+        for value in target_values:
+            try:
+                parent_ids.append(int(value))
+            except (TypeError, ValueError):
+                pass
+        if not parent_ids:
+            raise HTTPException(400, "請至少選擇一位家長")
+
+        cur.execute("""
+            SELECT DISTINCT id,line_user_id,display_name
+            FROM parents
+            WHERE id = ANY(%s)
+              AND line_user_id IS NOT NULL
+              AND BTRIM(line_user_id) <> ''
+            ORDER BY display_name
+        """, (parent_ids,))
+        return cur.fetchall(), "指定家長"
+
+    raise HTTPException(400, "target_type 錯誤")
+
+
+@app.get("/api/admin/messages/preview")
+def preview_message_targets(
+    target_type: str = Query("all"),
+    target_values: str = Query(""),
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+    values = [x for x in target_values.split(",") if x]
+    with db() as conn:
+        with conn.cursor() as cur:
+            recipients, label = resolve_message_recipients(cur, target_type, values)
+
+    return {
+        "target_type": target_type,
+        "target_label": label,
+        "recipient_count": len(recipients),
+        "recipients": [
+            {"id": r["id"], "display_name": r["display_name"]}
+            for r in recipients
+        ],
+    }
+
+
+async def push_text_message(user_id: str, message: str):
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        return False, "LINE_CHANNEL_ACCESS_TOKEN 尚未設定"
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"to": user_id, "messages": [{"type": "text", "text": message}]},
+        )
+
+    if 200 <= r.status_code < 300:
+        return True, ""
+    return False, f"HTTP {r.status_code}: {r.text[:300]}"
+
+
+@app.post("/api/admin/messages/send")
+async def send_admin_message(
+    body: MessageSendIn,
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(400, "訊息內容不可空白")
+    if len(message) > 5000:
+        raise HTTPException(400, "訊息內容過長")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            recipients, label = resolve_message_recipients(
+                cur, body.target_type, body.target_values
+            )
+
+    if not recipients:
+        raise HTTPException(404, "沒有符合條件的家長")
+
+    results = []
+    for recipient in recipients:
+        ok, error = await push_text_message(recipient["line_user_id"], message)
+        results.append({
+            "parent_id": recipient["id"],
+            "display_name": recipient["display_name"],
+            "ok": ok,
+            "error": error,
+        })
+
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO message_logs(
+                        parent_id,line_user_id,recipient_name,
+                        target_type,target_label,message_text,
+                        status,error_message
+                    )
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    recipient["id"],
+                    recipient["line_user_id"],
+                    recipient["display_name"],
+                    body.target_type,
+                    label,
+                    message,
+                    "sent" if ok else "failed",
+                    error,
+                ))
+            conn.commit()
+
+    return {
+        "ok": all(x["ok"] for x in results),
+        "recipient_count": len(recipients),
+        "sent": sum(1 for x in results if x["ok"]),
+        "failed": sum(1 for x in results if not x["ok"]),
+        "results": results,
+    }
+
+
+@app.get("/api/admin/messages/logs")
+def admin_message_logs(
+    limit: int = Query(100, ge=1, le=500),
+    authorization: str | None = Header(default=None),
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,parent_id,recipient_name,target_type,target_label,
+                       message_text,status,error_message,sent_at
+                FROM message_logs
+                ORDER BY sent_at DESC,id DESC
+                LIMIT %s
+            """, (limit,))
+            return cur.fetchall()
 
 
 # ---------------- LINE notification ----------------

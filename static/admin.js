@@ -6,8 +6,8 @@ function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setT
 function showLogin(){$("loginBox").classList.remove("hidden");$("adminApp").classList.add("hidden")}function showAdmin(){$("loginBox").classList.add("hidden");$("adminApp").classList.remove("hidden")}
 $("loginBtn").onclick=async()=>{try{const r=await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:$("adminPassword").value})});adminToken=r.token;sessionStorage.setItem("adminToken",adminToken);showAdmin();await loadAll()}catch(e){$("loginError").textContent=e.message}};
 $("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("loginBtn").click()});$("logoutBtn").onclick=()=>{sessionStorage.clear();adminToken="";showLogin()};
-const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理"};
-window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments()};
+const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心"};
+window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadMessages()};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 async function loadAll(){await Promise.all([loadPlayers(),loadParents(),loadEvents(),loadPayments(),loadDashboard()])}
 async function loadDashboard(){const d=await api("/api/admin/dashboard");$("stats").innerHTML=[["球員",d.players],["家長",d.parents],["未綁定家長",d.unbound_parents],["近期活動",d.events],["未回覆",d.pending_replies],["未收款",fmtMoney(d.unpaid)]].map(x=>`<div class="stat"><div class="l">${x[0]}</div><div class="k">${x[1]}</div></div>`).join("")}
@@ -192,6 +192,117 @@ window.deletePayment = async (id) => {
     toast(e.message);
   }
 };
+
+
+function updateMessageTargetUI(){
+  const type=$("messageTargetType").value;
+  $("messageTeamWrap").classList.toggle("hidden",type!=="team");
+  $("messageParentWrap").classList.toggle("hidden",type!=="parent");
+  previewMessageRecipients();
+}
+
+function selectedMessageTargets(){
+  const type=$("messageTargetType").value;
+  if(type==="team"){
+    return [...document.querySelectorAll('input[name="messageTeam"]:checked')].map(x=>x.value);
+  }
+  if(type==="parent"){
+    return [...document.querySelectorAll('input[name="messageParent"]:checked')].map(x=>x.value);
+  }
+  return [];
+}
+
+async function previewMessageRecipients(){
+  if(!$("messageTargetType"))return;
+  const type=$("messageTargetType").value;
+  const values=selectedMessageTargets();
+
+  if((type==="team"||type==="parent")&&!values.length){
+    $("messageRecipientCount").textContent="預計發送：0 位家長";
+    $("messageRecipientNames").innerHTML="";
+    return;
+  }
+
+  try{
+    const d=await api(`/api/admin/messages/preview?target_type=${encodeURIComponent(type)}&target_values=${encodeURIComponent(values.join(","))}`);
+    $("messageRecipientCount").textContent=`預計發送：${d.recipient_count} 位家長`;
+    $("messageRecipientNames").innerHTML=
+      d.recipients.slice(0,30).map(x=>`<span class="tag">${x.display_name}</span>`).join("")+
+      (d.recipient_count>30?`<span class="tag amber">另 ${d.recipient_count-30} 位</span>`:"");
+  }catch(e){
+    $("messageRecipientCount").textContent="無法取得發送對象";
+    $("messageRecipientNames").innerHTML="";
+  }
+}
+
+async function loadMessageLogs(){
+  const rows=await api("/api/admin/messages/logs?limit=100");
+  $("messageLogs").innerHTML=`<div class="tableWrap"><table><thead><tr><th>時間</th><th>家長</th><th>對象</th><th>訊息</th><th>結果</th></tr></thead><tbody>${
+    rows.map(x=>`<tr><td>${new Date(x.sent_at).toLocaleString("zh-TW")}</td><td>${x.recipient_name||"-"}</td><td>${x.target_label||x.target_type}</td><td class="messageLogText">${x.message_text||""}</td><td><span class="tag ${x.status==="sent"?"green":"red"}">${x.status==="sent"?"成功":"失敗"}</span>${x.error_message?`<div class="muted">${x.error_message}</div>`:""}</td></tr>`).join("")||'<tr><td colspan="5">尚無訊息紀錄</td></tr>'
+  }</tbody></table></div>`;
+}
+
+async function loadMessages(){
+  if(!cache.parents.length)await loadParents();
+
+  $("messageParentChoices").innerHTML=cache.parents.map(p=>`
+    <label class="check parentChoice">
+      <input type="checkbox" name="messageParent" value="${p.id}">
+      ${p.display_name}
+      ${(p.players||[]).length?`<span class="muted">(${p.players.map(x=>x.name).join("、")})</span>`:""}
+    </label>`).join("");
+
+  updateMessageTargetUI();
+  await loadMessageLogs();
+}
+
+$("messageTargetType").onchange=updateMessageTargetUI;
+
+document.addEventListener("change",e=>{
+  if(e.target.name==="messageTeam"||e.target.name==="messageParent"){
+    previewMessageRecipients();
+  }
+});
+
+$("messageText").addEventListener("input",()=>{
+  $("messageCharCount").textContent=$("messageText").value.length;
+});
+
+$("sendMessageBtn").onclick=async()=>{
+  const type=$("messageTargetType").value;
+  const values=selectedMessageTargets();
+  const message=$("messageText").value.trim();
+
+  if(!message)return toast("請輸入訊息內容");
+  if((type==="team"||type==="parent")&&!values.length){
+    return toast(type==="team"?"請至少選擇一個組別":"請至少選擇一位家長");
+  }
+
+  await previewMessageRecipients();
+
+  if(!confirm(`${$("messageRecipientCount").textContent}\n\n訊息內容：\n${message}\n\n確定發送？`))return;
+
+  try{
+    $("sendMessageBtn").disabled=true;
+    $("sendMessageBtn").textContent="發送中...";
+
+    const r=await api("/api/admin/messages/send",{
+      method:"POST",
+      body:JSON.stringify({target_type:type,target_values:values,message})
+    });
+
+    toast(`發送完成：成功 ${r.sent}、失敗 ${r.failed}`);
+    $("messageText").value="";
+    $("messageCharCount").textContent="0";
+    await loadMessageLogs();
+  }catch(e){
+    toast(e.message);
+  }finally{
+    $("sendMessageBtn").disabled=false;
+    $("sendMessageBtn").textContent="📨 發送 LINE 訊息";
+  }
+};
+
 
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
 
