@@ -30,6 +30,7 @@ async function loadParents() {
             <th>電話</th>
             <th>LINE User ID</th>
             <th>綁定球員</th>
+            <th>管理權限</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -47,6 +48,12 @@ async function loadParents() {
                       ).join("")
                     : `<span class="tag amber">尚未綁定</span>`
                 }
+              </td>
+              <td>
+                <button class="${p.is_admin?'adminEnabled':'ghost'}"
+                        onclick="toggleParentAdmin(${p.id},${p.is_admin?'false':'true'})">
+                  ${p.is_admin?'✅ 管理員':'一般家長'}
+                </button>
               </td>
               <td>
                 <div class="rowActions">
@@ -75,6 +82,21 @@ window.unbind=async(pa,pl)=>{if(!confirm("確定解除綁定？"))return;await a
 
 function matchRowHtml(index,match={}){const t=match.game_time||"",tbd=!!match.game_time_tbd,o=match.opponent||"";return `<div class="matchRow"><div class="matchNo">第 ${index+1} 場</div><label>比賽時間<input class="matchTime" type="time" value="${t}" ${tbd?"disabled":""}></label><label>對戰對手<input class="matchOpponent" value="${o.replace(/"/g,"&quot;")}" placeholder="例如 KEEP"></label><label class="check"><input class="matchTimeTbd" type="checkbox" ${tbd?"checked":""}> 時間未定</label><button type="button" class="removeMatch" onclick="removeMatchRow(this)">刪除</button></div>`}
 window.addMatchRow=(m={})=>{const r=$("matchRows");r.insertAdjacentHTML("beforeend",matchRowHtml(r.children.length,m));renumberMatchRows()};window.removeMatchRow=b=>{b.closest(".matchRow").remove();renumberMatchRows()};function renumberMatchRows(){[...$("matchRows").children].forEach((r,i)=>r.querySelector(".matchNo").textContent=`第 ${i+1} 場`)}function collectMatches(){return [...document.querySelectorAll(".matchRow")].map(r=>({game_time:r.querySelector(".matchTimeTbd").checked?null:(r.querySelector(".matchTime").value||null),game_time_tbd:r.querySelector(".matchTimeTbd").checked,opponent:r.querySelector(".matchOpponent").value.trim()}))}document.addEventListener("change",e=>{if(e.target.classList.contains("matchTimeTbd")){const r=e.target.closest(".matchRow"),t=r.querySelector(".matchTime");t.disabled=e.target.checked;if(e.target.checked)t.value=""}if(e.target.id==="eventMeetTimeTbdInput"){$("eventMeetTimeInput").disabled=e.target.checked;if(e.target.checked)$("eventMeetTimeInput").value=""}});
+
+
+window.toggleParentAdmin=async(id,enabled)=>{
+  const p=cache.parents.find(x=>Number(x.id)===Number(id));
+  const action=enabled?"授予":"取消";
+  if(!confirm(`確定要${action}「${p?.display_name||"此家長"}」管理員權限？`))return;
+
+  try{
+    await api(`/api/admin/parents/${id}/admin?enabled=${enabled}`,{method:"PUT"});
+    toast(enabled?"已授予管理員權限":"已取消管理員權限");
+    await loadParents();
+  }catch(e){
+    toast(e.message);
+  }
+};
 
 async function loadEvents(){cache.events=await api("/api/admin/events");$("eventTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>日期</th><th>活動</th><th>類型</th><th>通知對象</th><th>回覆</th><th>出席</th><th>請假</th><th>餐點</th><th>操作</th></tr></thead><tbody>${cache.events.map(e=>`<tr><td>${e.event_date}</td><td><strong>${e.title}</strong><div>${e.location}</div><div class="muted">集合：${e.meet_time_tbd?"未定":(e.meet_time||"未定")}｜${e.match_count||0} 場</div></td><td><span class="tag">${e.event_type==="game"?"比賽":e.event_type==="practice"?"練球":"活動"}</span></td><td>${e.invited} 位球員</td><td>${e.replied}/${e.invited} <span class="tag ${Number(e.replied)<Number(e.invited)?"amber":"green"}">${Number(e.invited)-Number(e.replied)} 未回覆</span></td><td>${e.attend}</td><td>${e.leave}</td><td>${e.meal_enabled===false?'<span class="tag">不訂餐</span>':`${e.meals} 份`}</td><td><div class="rowActions"><button onclick="viewEvent(${e.id})">統計 / 通知</button><button onclick="editEvent(${e.id})">編輯</button><button onclick="deleteEvent(${e.id}, '${e.title.replace(/'/g, "\\'")}')">刪除</button></div></td></tr>`).join("")}</tbody></table></div>`}
 function renderEventPlayers(sel=[]){const s=new Set(sel.map(Number));$("eventPlayerChoices").innerHTML=cache.players.filter(p=>p.active).map(p=>`<label class="choice"><input type="checkbox" value="${p.id}" ${s.has(Number(p.id))?"checked":""}> ${p.name}/${p.team}${p.number?` #${p.number}`:""}</label>`).join("")}
@@ -644,6 +666,29 @@ window.deleteAnnouncement=async id=>{
 const refreshAnnouncementsBtn=$("refreshAnnouncementsBtn");
 if(refreshAnnouncementsBtn)refreshAnnouncementsBtn.onclick=loadAdminAnnouncements;
 
+
+
+const embeddedAdmin=new URLSearchParams(location.search).get("embedded")==="1";
+if(embeddedAdmin){
+  document.body.classList.add("embeddedAdmin");
+}
+
+window.addEventListener("message",async event=>{
+  if(event.origin!==location.origin)return;
+  if(event.data?.type!=="TEAM_PARENT_ADMIN_AUTH")return;
+  if(!event.data?.token?.startsWith("parent-admin:"))return;
+
+  adminToken=event.data.token;
+  sessionStorage.setItem("adminToken",adminToken);
+
+  try{
+    showAdmin();
+    await loadAll();
+  }catch(e){
+    console.error("Integrated admin load failed:",e);
+    showLogin();
+  }
+});
 
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
 

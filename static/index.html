@@ -95,6 +95,24 @@
       <div id="announcementList"></div>
     </section>
 
+
+    <section id="managementPage" class="page hidden">
+      <div class="managementHeader">
+        <div>
+          <div class="eyebrow">ADMIN</div>
+          <h2>球隊管理</h2>
+        </div>
+        <button id="reloadAdminFrame" class="secondary compactBtn">重新整理</button>
+      </div>
+      <p class="muted">此功能僅限已授權的 LINE 管理員帳號。</p>
+      <div id="managementLoading" class="card muted">正在驗證管理員權限...</div>
+      <div id="managementDenied" class="card hidden">
+        <strong>沒有管理員權限</strong>
+        <p class="muted">請由現有管理員在「家長管理」中授權此 LINE 帳號。</p>
+      </div>
+      <iframe id="adminFrame" class="adminFrame hidden" title="球隊管理"></iframe>
+    </section>
+
 <section id="paymentsPage" class="page hidden">
       <h2>繳費紀錄</h2><p class="muted">查看目前應繳與已繳項目。</p><div id="payments"></div>
     </section>
@@ -143,7 +161,8 @@
     <button data-page="volunteerPage"><span>🙋</span>義工</button>
     <button data-page="paymentsPage"><span>💰</span>繳費</button>
     <button data-page="profilePage"><span>👤</span>我的</button>
-  </nav>
+  
+    <button id="managementNav" data-page="managementPage" class="hidden"><span>⚙️</span>管理</button></nav>
 </div>
 
 <dialog id="eventDialog">

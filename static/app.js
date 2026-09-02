@@ -79,7 +79,7 @@ $("lineLogin").onclick=async()=>{
 };
 $("mockLogin").onclick=()=>finishLogin("mock").catch(e=>toast(e.message));$("retryBinding").onclick=()=>loadApp().catch(e=>toast(e.message));
 
-async function loadApp(){const me=await api("/api/me");state.parent=me.parent;state.players=me.players;if(me.needs_binding||!state.players.length){$("bindingHello").textContent=`${state.parent.display_name}，登入成功`;showOnly("binding");return}state.playerId=state.playerId||state.players[0].id;$("hello").textContent=`${state.parent.display_name}，你好`;$("parentName").textContent=state.parent.display_name;$("childrenCount").textContent=`${state.players.length} 位`;$("playerSelect").innerHTML=state.players.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");$("playerSelect").value=state.playerId;$("playerSelect").onchange=async e=>{state.playerId=Number(e.target.value);await refresh()};state.events=await api("/api/events");showOnly("app");await refresh();const eventId=Number(new URLSearchParams(location.search).get("event"));if(eventId&&state.events.find(x=>Number(x.id)===eventId)){setTimeout(()=>openEvent(eventId),250)}}
+async function loadApp(){const me=await api("/api/me");state.parent=me.parent;state.players=me.players;updateManagementVisibility();if(me.needs_binding||!state.players.length){$("bindingHello").textContent=`${state.parent.display_name}，登入成功`;showOnly("binding");return}state.playerId=state.playerId||state.players[0].id;$("hello").textContent=`${state.parent.display_name}，你好`;$("parentName").textContent=state.parent.display_name;$("childrenCount").textContent=`${state.players.length} 位`;$("playerSelect").innerHTML=state.players.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");$("playerSelect").value=state.playerId;$("playerSelect").onchange=async e=>{state.playerId=Number(e.target.value);await refresh()};state.events=await api("/api/events");showOnly("app");await refresh();const eventId=Number(new URLSearchParams(location.search).get("event"));if(eventId&&state.events.find(x=>Number(x.id)===eventId)){setTimeout(()=>openEvent(eventId),250)}}
 
 $("previewBindBtn").onclick=async()=>{const code=$("bindCodeInput").value.trim().toUpperCase();if(code.length<4)return toast("請輸入完整綁定碼");try{const d=await api("/api/bind/preview",{method:"POST",body:JSON.stringify({code})});pendingCode=code;const p=d.player;$("bindPreview").classList.remove("hidden");$("bindPreview").innerHTML=`<div class="bindResult"><div class="bindPlayer">⚾ ${p.name}</div><div>${p.team}${p.number?` / #${p.number}`:""}</div><div class="muted">目前已綁定 ${d.linked_parents}/${d.max_parents} 位家長</div>${d.already_bound?'<div class="bindOk">✅ 你已綁定此球員</div>':d.can_bind?'<button id="confirmBindBtn" class="primary">確認綁定</button>':'<div class="bindError">此球員已達家長綁定上限</div>'}</div>`;const b=$("confirmBindBtn");if(b)b.onclick=confirmBinding}catch(e){toast(e.message)}};
 async function confirmBinding(){try{const d=await api("/api/bind/confirm",{method:"POST",body:JSON.stringify({code:pendingCode})});toast(`已綁定 ${d.player.name}`);$("bindCodeInput").value="";$("bindPreview").classList.add("hidden");await loadApp()}catch(e){toast(e.message)}}
@@ -345,6 +345,69 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("even
   player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
   parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
 })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
+
+let integratedAdminToken="";
+
+function updateManagementVisibility(){
+  const nav=$("managementNav");
+  if(!nav)return;
+  nav.classList.toggle("hidden",!state.parent?.is_admin);
+}
+
+async function openIntegratedAdmin(forceReload=false){
+  const loading=$("managementLoading");
+  const denied=$("managementDenied");
+  const frame=$("adminFrame");
+
+  loading?.classList.remove("hidden");
+  denied?.classList.add("hidden");
+  frame?.classList.add("hidden");
+
+  try{
+    const r=await api("/api/me/admin-session");
+    integratedAdminToken=r.token;
+
+    if(forceReload || !frame.src){
+      frame.src="/admin?embedded=1";
+    }
+
+    const sendToken=()=>{
+      try{
+        frame.contentWindow?.postMessage({
+          type:"TEAM_PARENT_ADMIN_AUTH",
+          token:integratedAdminToken
+        },location.origin);
+      }catch(e){
+        console.error("admin iframe auth failed",e);
+      }
+    };
+
+    frame.onload=()=>{
+      sendToken();
+      setTimeout(sendToken,150);
+      loading?.classList.add("hidden");
+      frame?.classList.remove("hidden");
+    };
+
+    // iframe may already be loaded.
+    if(frame.contentWindow && frame.src){
+      sendToken();
+      setTimeout(()=>{
+        loading?.classList.add("hidden");
+        frame?.classList.remove("hidden");
+      },250);
+    }
+
+  }catch(e){
+    loading?.classList.add("hidden");
+    frame?.classList.add("hidden");
+    denied?.classList.remove("hidden");
+    console.error(e);
+  }
+}
+
+$("reloadAdminFrame")?.addEventListener("click",()=>openIntegratedAdmin(true));
+
 document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
   document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
   $(btn.dataset.page).classList.remove("hidden");
@@ -365,6 +428,10 @@ document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
 
   if(btn.dataset.page==="volunteerPage"){
     // Google 義工頁不需要額外 API 載入
+  }
+
+  if(btn.dataset.page==="managementPage"){
+    await openIntegratedAdmin();
   }
 });
 

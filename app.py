@@ -95,6 +95,7 @@ def init_db():
             );
             """)
 
+            cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE")
             cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''")
             cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT TRUE")
             cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ")
@@ -840,6 +841,24 @@ def me(authorization: str | None = Header(default=None)):
     }
 
 
+
+@app.get("/api/me/admin-session")
+def parent_admin_session(
+    authorization: str | None = Header(default=None)
+):
+    parent = current_parent(authorization)
+
+    if not parent.get("is_admin", False):
+        raise HTTPException(403, "此 LINE 帳號沒有管理員權限")
+
+    return {
+        "ok": True,
+        "token": f"parent-admin:{parent['id']}",
+        "parent_id": parent["id"],
+        "display_name": parent["display_name"],
+    }
+
+
 @app.get("/api/events")
 def parent_events(authorization: str | None = Header(default=None)):
     p = current_parent(authorization)
@@ -1020,9 +1039,33 @@ def admin_login(body: AdminLogin):
 
 
 def require_admin(authorization):
-    expected = f"Bearer admin:{ADMIN_PASSWORD}"
-    if not authorization or not secrets.compare_digest(authorization, expected):
+    if not authorization:
         raise HTTPException(401, "管理員驗證失敗")
+
+    expected = f"Bearer admin:{ADMIN_PASSWORD}"
+    if secrets.compare_digest(authorization, expected):
+        return {"type": "password"}
+
+    prefix = "Bearer parent-admin:"
+    if authorization.startswith(prefix):
+        try:
+            parent_id = int(authorization[len(prefix):])
+        except Exception:
+            raise HTTPException(401, "管理員驗證失敗")
+
+        with db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id,display_name,line_user_id,is_admin
+                    FROM parents
+                    WHERE id=%s
+                """, (parent_id,))
+                parent = cur.fetchone()
+
+        if parent and parent.get("is_admin", False):
+            return {"type": "line", "parent": parent}
+
+    raise HTTPException(401, "管理員驗證失敗")
 
 
 # ---------------- Admin models ----------------
@@ -1270,7 +1313,7 @@ def admin_parents(authorization: str | None = Header(default=None)):
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT pa.id,pa.line_user_id,pa.display_name,pa.picture_url,pa.phone,pa.is_primary,pa.last_login_at,
+                SELECT pa.id,pa.line_user_id,pa.display_name,pa.picture_url,pa.phone,pa.is_primary,pa.is_admin,pa.last_login_at,
                        COALESCE((
                            SELECT json_agg(json_build_object('id',p.id,'name',p.name,'team',p.team,'number',p.number) ORDER BY p.team,p.name)
                            FROM parent_players pp JOIN players p ON p.id=pp.player_id
@@ -1304,6 +1347,32 @@ def create_parent(body: ParentIn, authorization: str | None = Header(default=Non
 
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, "此 LINE User ID 已存在")
+
+
+
+@app.put("/api/admin/parents/{parent_id}/admin")
+def set_parent_admin(
+    parent_id: int,
+    enabled: bool = Query(...),
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE parents
+                SET is_admin=%s
+                WHERE id=%s
+                RETURNING id,display_name,line_user_id,is_admin
+            """, (enabled, parent_id))
+            row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(404, "找不到家長")
+
+    return {"ok": True, "parent": row}
 
 
 @app.post("/api/admin/bind")

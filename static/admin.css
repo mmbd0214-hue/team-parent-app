@@ -184,3 +184,29 @@ dialog{border:0;border-radius:20px;width:min(620px,calc(100% - 24px));padding:0;
 @media(max-width:560px){
   .announcementEditCard .checkGrid{grid-template-columns:repeat(2,1fr)}
 }
+
+.adminEnabled{font-weight:700}
+body.embeddedAdmin{background:transparent}
+body.embeddedAdmin .loginWrap{min-height:65vh}
+body.embeddedAdmin aside{width:190px}
+body.embeddedAdmin main{padding:14px}
+@media(max-width:760px){
+  body.embeddedAdmin .app{display:block}
+  body.embeddedAdmin aside{
+    position:static;
+    width:auto;
+    padding:8px;
+  }
+  body.embeddedAdmin aside .brand{display:none}
+  body.embeddedAdmin aside nav{
+    display:flex;
+    overflow-x:auto;
+    gap:6px;
+  }
+  body.embeddedAdmin aside nav button{
+    flex:0 0 auto;
+    white-space:nowrap;
+  }
+  body.embeddedAdmin main{padding:10px}
+  body.embeddedAdmin header{margin-bottom:10px}
+}
