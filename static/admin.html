@@ -86,6 +86,15 @@
         <div id="messageRecipientNames" class="recipientList"></div>
       </div>
 
+      <label>公告標題（選填）
+        <input id="announcementTitle" placeholder="例如：本週練球通知">
+      </label>
+
+      <label class="check">
+        <input id="saveAsAnnouncement" type="checkbox" checked>
+        同步保留在家長 App「公告」
+      </label>
+
       <label>訊息內容
         <textarea id="messageText" rows="9" placeholder="輸入要發送給家長的 LINE 訊息"></textarea>
       </label>
@@ -132,6 +141,17 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="panel">
+    <div class="toolbar">
+      <div>
+        <h3>App 公告管理</h3>
+        <p class="muted">可以隱藏或刪除已同步到家長 App 的公告。</p>
+      </div>
+      <button id="refreshAnnouncementsBtn" class="ghost">重新整理</button>
+    </div>
+    <div id="adminAnnouncementList"></div>
   </div>
 </section>
 

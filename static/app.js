@@ -151,6 +151,46 @@ async function loadVolunteers(){
 window.signupVolunteer=async id=>{const el=$("volunteerPlayer_"+id);try{await api(`/api/volunteers/${id}/signup`,{method:"POST",body:JSON.stringify({player_id:el&&el.value?Number(el.value):null})});toast("義工登記完成");await loadVolunteers()}catch(e){toast(e.message)}};
 window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎？"))return;try{await api(`/api/volunteers/${id}/signup`,{method:"DELETE"});toast("已取消義工登記");await loadVolunteers()}catch(e){toast(e.message)}};
 
+
+function announcementTargetLabel(a){
+  if(a.target_type==="all")return "全部";
+  if(a.target_type==="team")return (a.target_values||[]).join("、") || "組別";
+  return "指定家長";
+}
+
+async function loadAnnouncements(){
+  const rows=await api("/api/announcements");
+
+  $("announcementList").innerHTML=(rows||[]).map(a=>{
+    const dt=new Date(a.created_at);
+    const title=a.title?.trim() || "球隊通知";
+
+    return `
+      <div class="card announcementCard">
+        <div class="announcementTop">
+          <div>
+            <div class="announcementDate">${dt.toLocaleString("zh-TW")}</div>
+            <h3>${escapeParentHtml(title)}</h3>
+          </div>
+          <span class="tag">${escapeParentHtml(announcementTargetLabel(a))}</span>
+        </div>
+
+        <div class="announcementText">
+          ${escapeParentHtml(a.message_text||"").replace(/\n/g,"<br>")}
+        </div>
+      </div>`;
+  }).join("") || `<div class="card muted">目前沒有公告</div>`;
+}
+
+function escapeParentHtml(text){
+  return String(text??"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
+}
+
 document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
     const profileNav=document.querySelector('nav button[data-page="profilePage"]');
     if(profileNav)profileNav.classList.add("active");
@@ -222,7 +262,7 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("even
   player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
   parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
 })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
-document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active");});
+document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active");if(btn.dataset.page==="announcementsPage")await loadAnnouncements();});
 
 const extraPreviewBtn=$("extraPreviewBindBtn");
 if(extraPreviewBtn)extraPreviewBtn.onclick=previewExtraBinding;

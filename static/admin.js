@@ -320,11 +320,17 @@ $("sendMessageBtn").onclick=async()=>{
 
     const r=await api("/api/admin/messages/send",{
       method:"POST",
-      body:JSON.stringify({target_type:type,target_values:values,message})
+      body:JSON.stringify({
+        target_type:type,
+        target_values:values,
+        message,
+        announcement_title:$("announcementTitle").value.trim(),
+        save_as_announcement:$("saveAsAnnouncement").checked
+      })
     });
 
     toast(`發送完成：成功 ${r.sent}、失敗 ${r.failed}`);
-    $("messageText").value="";
+    $("messageText").value="";$("announcementTitle").value="";
     $("messageCharCount").textContent="0";
     await loadMessageLogs();
   }catch(e){
@@ -462,6 +468,69 @@ if(adminVolunteerBtn){
     window.open("https://script.google.com/macros/s/AKfycbwRsh7TUzKrHldH5-YJV_wH6JvtNOEu78mx0z0a7wKlMi8-6hwrthgR5DcJLe_A5lQxyw/exec","_blank","noopener,noreferrer");
   };
 }
+
+
+function adminAnnouncementTarget(a){
+  if(a.target_type==="all")return "全部家長";
+  if(a.target_type==="team")return (a.target_values||[]).join("、")||"依組別";
+  return "指定家長";
+}
+
+async function loadAdminAnnouncements(){
+  if(!$("adminAnnouncementList"))return;
+
+  const rows=await api("/api/admin/announcements");
+
+  $("adminAnnouncementList").innerHTML=(rows||[]).map(a=>{
+    const text=(a.message_text||"").replace(/\s+/g," ").trim();
+    const preview=text.length>90?text.slice(0,90)+"…":text;
+
+    return `
+      <div class="adminAnnouncementCard">
+        <div class="adminAnnouncementMain">
+          <div class="messageSummaryTop">
+            <strong>${escapeHtml(a.title||"球隊通知")}</strong>
+            <span class="messageSummaryTime">${new Date(a.created_at).toLocaleString("zh-TW")}</span>
+          </div>
+          <div class="muted">${escapeHtml(adminAnnouncementTarget(a))}</div>
+          <div class="messageSummaryText">${escapeHtml(preview)}</div>
+        </div>
+
+        <div class="rowActions">
+          <button onclick="toggleAnnouncement(${a.id},${a.active?'false':'true'})">
+            ${a.active?"隱藏":"重新顯示"}
+          </button>
+          <button onclick="deleteAnnouncement(${a.id})">刪除</button>
+        </div>
+      </div>`;
+  }).join("") || `<div class="muted">尚無 App 公告</div>`;
+}
+
+window.toggleAnnouncement=async(id,active)=>{
+  try{
+    await api(`/api/admin/announcements/${id}/active?active=${active}`,{method:"PUT"});
+    toast(active?"公告已顯示":"公告已隱藏");
+    await loadAdminAnnouncements();
+  }catch(e){
+    toast(e.message);
+  }
+};
+
+window.deleteAnnouncement=async id=>{
+  if(!confirm("確定永久刪除此 App 公告？LINE 已發出的訊息不會被收回。"))return;
+
+  try{
+    await api(`/api/admin/announcements/${id}`,{method:"DELETE"});
+    toast("公告已刪除");
+    await loadAdminAnnouncements();
+  }catch(e){
+    toast(e.message);
+  }
+};
+
+const refreshAnnouncementsBtn=$("refreshAnnouncementsBtn");
+if(refreshAnnouncementsBtn)refreshAnnouncementsBtn.onclick=loadAdminAnnouncements;
+
 
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
 

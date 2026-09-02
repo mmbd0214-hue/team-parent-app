@@ -192,6 +192,24 @@ def init_db():
             )
             """)
 
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS announcements (
+                id BIGSERIAL PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                message_text TEXT NOT NULL,
+                target_type TEXT NOT NULL DEFAULT 'all',
+                target_values JSONB NOT NULL DEFAULT '[]'::jsonb,
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """)
+
+            cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_announcements_created_at
+            ON announcements(created_at DESC)
+            """)
+
+
             cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS batch_id TEXT")
 
 
@@ -364,6 +382,68 @@ def current_parent(authorization):
         raise HTTPException(401, "家長不存在")
 
     return row
+
+
+
+@app.get("/api/announcements")
+def parent_announcements(
+    authorization: str | None = Header(default=None)
+):
+    parent = current_parent(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT p.team
+                FROM parent_players pp
+                JOIN players p ON p.id=pp.player_id
+                WHERE pp.parent_id=%s
+                  AND p.active=TRUE
+            """, (parent["id"],))
+            teams = {r["team"] for r in cur.fetchall()}
+
+            cur.execute("""
+                SELECT
+                    a.id,
+                    a.title,
+                    a.message_text,
+                    a.target_type,
+                    a.target_values,
+                    a.created_at
+                FROM announcements a
+                WHERE a.active=TRUE
+                ORDER BY a.created_at DESC,a.id DESC
+                LIMIT 200
+            """)
+            rows = cur.fetchall()
+
+            visible = []
+            for row in rows:
+                target_type = row["target_type"]
+                target_values = row["target_values"] or []
+
+                if target_type == "all":
+                    visible.append(row)
+                    continue
+
+                if target_type == "team":
+                    if any(team in teams for team in target_values):
+                        visible.append(row)
+                    continue
+
+                if target_type == "parent":
+                    cur.execute("""
+                        SELECT 1
+                        FROM message_logs ml
+                        WHERE ml.parent_id=%s
+                          AND ml.message_text=%s
+                          AND ml.target_type='parent'
+                        LIMIT 1
+                    """, (parent["id"], row["message_text"]))
+                    if cur.fetchone():
+                        visible.append(row)
+
+            return visible
 
 
 # ---------------- Parent self binding ----------------
@@ -736,6 +816,9 @@ class NotifyIn(BaseModel):
 
 class MessageSendIn(BaseModel):
     target_type: str = "all"
+    announcement_title: str = ""
+    save_as_announcement: bool = True
+
     target_values: list[str] = []
     message: str
 
@@ -1405,6 +1488,32 @@ async def line_webhook(
     return {"ok": True}
 
 
+
+def save_app_announcement(
+    message_text: str,
+    target_type: str,
+    target_values: list[str],
+    title: str = "",
+):
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO announcements(
+                    title,message_text,target_type,target_values,active
+                )
+                VALUES(%s,%s,%s,%s::jsonb,TRUE)
+                RETURNING id
+            """, (
+                title.strip(),
+                message_text.strip(),
+                target_type,
+                json.dumps(target_values, ensure_ascii=False),
+            ))
+            row = cur.fetchone()
+        conn.commit()
+    return row["id"]
+
+
 # ---------------- Admin message center ----------------
 
 def resolve_message_recipients(cur, target_type: str, target_values: list[str]):
@@ -1524,6 +1633,15 @@ async def send_admin_message(
     if not recipients:
         raise HTTPException(404, "沒有符合條件的家長")
 
+    announcement_id = None
+    if body.save_as_announcement:
+        announcement_id = save_app_announcement(
+            message_text=message,
+            target_type=body.target_type,
+            target_values=body.target_values,
+            title=body.announcement_title,
+        )
+
     # 同一次群發共用同一個 batch_id，後台只顯示一筆摘要
     batch_id = secrets.token_hex(12)
     results = []
@@ -1565,6 +1683,7 @@ async def send_admin_message(
         "sent": sum(1 for x in results if x["ok"]),
         "failed": sum(1 for x in results if not x["ok"]),
         "results": results,
+        "announcement_id": announcement_id,
     }
 
 
@@ -1833,6 +1952,71 @@ async def reply_admin_conversation(
     if not ok:
         raise HTTPException(502, error)
 
+    return {"ok": True}
+
+
+
+@app.get("/api/admin/announcements")
+def admin_announcements(
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id,title,message_text,target_type,target_values,
+                       active,created_at
+                FROM announcements
+                ORDER BY created_at DESC,id DESC
+                LIMIT 200
+            """)
+            return cur.fetchall()
+
+
+@app.put("/api/admin/announcements/{announcement_id}/active")
+def update_announcement_active(
+    announcement_id: int,
+    active: bool = Query(...),
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE announcements
+                SET active=%s
+                WHERE id=%s
+                RETURNING id
+            """, (active, announcement_id))
+            row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(404, "找不到公告")
+    return {"ok": True}
+
+
+@app.delete("/api/admin/announcements/{announcement_id}")
+def delete_announcement(
+    announcement_id: int,
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM announcements
+                WHERE id=%s
+                RETURNING id
+            """, (announcement_id,))
+            row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(404, "找不到公告")
     return {"ok": True}
 
 
