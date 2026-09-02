@@ -140,6 +140,16 @@ async function confirmExtraBinding(){
     document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
     $("profilePage").classList.remove("hidden");
     
+
+    document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
+    const profileNav=document.querySelector('nav button[data-page="profilePage"]');
+    if(profileNav)profileNav.classList.add("active");
+
+  }catch(e){
+    toast(e.message);
+  }
+}
+
 function volunteerWeekday(d){return ["日","一","二","三","四","五","六"][new Date(d+"T00:00:00").getDay()]};
 async function loadVolunteers(){
   const d=await api("/api/volunteers"),players=d.players||[];
@@ -273,15 +283,6 @@ async function loadAnnouncements(){
   }
 }
 
-document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
-    const profileNav=document.querySelector('nav button[data-page="profilePage"]');
-    if(profileNav)profileNav.classList.add("active");
-
-  }catch(e){
-    toast(e.message);
-  }
-}
-
 async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));const payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(payments)}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
@@ -351,7 +352,15 @@ document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
   btn.classList.add("active");
 
   if(btn.dataset.page==="announcementsPage"){
-    await loadAnnouncements();
+    try{
+      await loadAnnouncements();
+    }catch(e){
+      console.error("announcement page load failed:",e);
+      const box=$("announcementList");
+      if(box){
+        box.innerHTML=`<div class="card"><strong>公告載入失敗</strong><div class="muted">${String(e?.message||e)}</div></div>`;
+      }
+    }
   }
 
   if(btn.dataset.page==="volunteerPage"){
@@ -501,3 +510,5 @@ if("serviceWorker" in navigator){
 window.addEventListener("load",updateInstallUI);
 
 start();
+
+console.log("announcement structure fix v2 loaded");
