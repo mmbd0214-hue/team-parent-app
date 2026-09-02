@@ -6,8 +6,8 @@ function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setT
 function showLogin(){$("loginBox").classList.remove("hidden");$("adminApp").classList.add("hidden")}function showAdmin(){$("loginBox").classList.add("hidden");$("adminApp").classList.remove("hidden")}
 $("loginBtn").onclick=async()=>{try{const r=await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:$("adminPassword").value})});adminToken=r.token;sessionStorage.setItem("adminToken",adminToken);showAdmin();await loadAll()}catch(e){$("loginError").textContent=e.message}};
 $("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("loginBtn").click()});$("logoutBtn").onclick=()=>{sessionStorage.clear();adminToken="";showLogin()};
-const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心"};
-window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadMessages()};
+const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心",volunteers:"義工排班"};
+window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadMessages();};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 async function loadAll(){await Promise.all([loadPlayers(),loadParents(),loadEvents(),loadPayments(),loadDashboard()])}
 async function loadDashboard(){const d=await api("/api/admin/dashboard");$("stats").innerHTML=[["球員",d.players],["家長",d.parents],["未綁定家長",d.unbound_parents],["近期活動",d.events],["未回覆",d.pending_replies],["未收款",fmtMoney(d.unpaid)]].map(x=>`<div class="stat"><div class="l">${x[0]}</div><div class="k">${x[1]}</div></div>`).join("")}
@@ -453,6 +453,15 @@ $("conversationReplyBtn").onclick=async()=>{
 
 $("refreshConversationsBtn").onclick=loadConversations;
 
+
+\nfunction adminVolunteerWeekday(d){return ["日","一","二","三","四","五","六"][new Date(d+"T00:00:00").getDay()]};\nasync function loadVolunteersAdmin(){const rows=await api("/api/admin/volunteers");$("volunteerTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>日期</th><th>組別</th><th>登記</th><th>家長 / 球員</th><th>備註</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(v=>`<tr><td>${v.volunteer_date}（${adminVolunteerWeekday(v.volunteer_date)}）</td><td><strong>${v.group_name}</strong></td><td>${v.signup_count}/${v.capacity}</td><td>${(v.signups||[]).map(s=>`<span class="tag green">${s.parent_name||"-"}${s.player_name?`｜${s.player_name}/${s.team}`:""}</span>`).join("")||'<span class="tag amber">尚無人登記</span>'}</td><td>${v.note||"-"}</td><td><span class="tag ${v.status==="open"?"green":"red"}">${v.status==="open"?"開放":"關閉"}</span></td><td><div class="rowActions"><button onclick="setVolunteerStatus(${v.id},'${v.status==="open"?"closed":"open"}')">${v.status==="open"?"關閉":"重新開放"}</button><button onclick="deleteVolunteerSlot(${v.id})">刪除</button></div></td></tr>`).join("")||'<tr><td colspan="7">尚無義工時段</td></tr>'}</tbody></table></div>`};\nwindow.openVolunteerDialog=()=>{$("volunteerForm").reset();document.querySelectorAll('input[name="volunteerGroup"]').forEach(x=>x.checked=true);$("volunteerCapacityInput").value=1;volunteerDialog.showModal()};\n$("volunteerForm").onsubmit=async e=>{e.preventDefault();const groups=[...document.querySelectorAll('input[name="volunteerGroup"]:checked')].map(x=>x.value);if(!groups.length)return toast("請至少選擇一個組別");try{await api("/api/admin/volunteers",{method:"POST",body:JSON.stringify({volunteer_date:$("volunteerDateInput").value,groups,capacity:Number($("volunteerCapacityInput").value||1),note:$("volunteerNoteInput").value})});volunteerDialog.close();toast("義工日期已建立");await loadVolunteersAdmin()}catch(e){toast(e.message)}};\nwindow.setVolunteerStatus=async(id,status)=>{try{await api(`/api/admin/volunteers/${id}/status?status=${status}`,{method:"PUT"});toast(status==="open"?"已重新開放":"已關閉");await loadVolunteersAdmin()}catch(e){toast(e.message)}};\nwindow.deleteVolunteerSlot=async id=>{if(!confirm("確定刪除此義工時段？已登記資料也會一起刪除。"))return;try{await api(`/api/admin/volunteers/${id}`,{method:"DELETE"});toast("義工時段已刪除");await loadVolunteersAdmin()}catch(e){toast(e.message)}};\n
+
+const adminVolunteerBtn=$("adminOpenVolunteerWebApp");
+if(adminVolunteerBtn){
+  adminVolunteerBtn.onclick=()=>{
+    window.open("https://script.google.com/macros/s/AKfycbwRsh7TUzKrHldH5-YJV_wH6JvtNOEu78mx0z0a7wKlMi8-6hwrthgR5DcJLe_A5lQxyw/exec","_blank","noopener,noreferrer");
+  };
+}
 
 if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
 

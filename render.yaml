@@ -19,5 +19,7 @@ services:
         sync: false
       - key: APP_BASE_URL
         sync: false
+      - key: VOLUNTEER_WEBAPP_URL
+        value: "https://script.google.com/macros/s/AKfycbwRsh7TUzKrHldH5-YJV_wH6JvtNOEu78mx0z0a7wKlMi8-6hwrthgR5DcJLe_A5lQxyw/exec"
       - key: MOCK_LOGIN
         value: "0"

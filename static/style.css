@@ -9,7 +9,7 @@ header{position:sticky;top:0;z-index:4;background:#f6f7f4ef;backdrop-filter:blur
 main{padding:4px 16px 90px}.card{background:var(--card);border-radius:20px;padding:18px;margin-bottom:12px;box-shadow:0 7px 24px #2530260c}.hero{display:flex;justify-content:space-between;align-items:center;background:var(--accent);color:white}.hero h2{font-size:26px;margin:6px 0}.heroIcon{font-size:48px}.eyebrow{font-size:12px;letter-spacing:.08em;opacity:.7}.pill{display:inline-block;background:#ffffff1f;border-radius:999px;padding:5px 10px;font-size:13px}
 .eventCard .top,.row{display:flex;justify-content:space-between;gap:12px;align-items:center}.eventCard h4{margin:4px 0;font-size:18px}.meta{font-size:13px;color:var(--muted);margin-top:6px}.eventCard button{margin-top:14px;border:0;background:var(--soft);color:var(--accent);font-weight:700;border-radius:12px;padding:11px;width:100%}
 .payment{display:flex;align-items:center;justify-content:space-between;gap:10px}.status{font-size:12px;border-radius:999px;padding:5px 9px}.paid{background:#e7f5ea;color:#266938}.unpaid{background:#fdebea;color:var(--danger)}
-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(520px,100%);display:grid;grid-template-columns:repeat(3,1fr);background:#ffffffee;backdrop-filter:blur(14px);border-top:1px solid #e6e9e6;padding:7px 10px calc(7px + env(safe-area-inset-bottom))}nav button{border:0;background:none;color:#788078;padding:5px;font-size:12px}nav button span{display:block;font-size:20px;margin-bottom:2px}nav button.active{color:var(--accent);font-weight:800}
+nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(520px,100%);display:grid;grid-template-columns:repeat(4,1fr);background:#ffffffee;backdrop-filter:blur(14px);border-top:1px solid #e6e9e6;padding:7px 10px calc(7px + env(safe-area-inset-bottom))}nav button{border:0;background:none;color:#788078;padding:5px;font-size:12px}nav button span{display:block;font-size:20px;margin-bottom:2px}nav button.active{color:var(--accent);font-weight:800}
 dialog{border:0;border-radius:24px;padding:0;width:min(470px,calc(100% - 24px));box-shadow:0 24px 70px #0004}dialog::backdrop{background:#0a110c88}dialog form{padding:22px}.dialogTitle{display:flex;justify-content:space-between}.iconBtn{border:0;background:#f1f3f1;width:36px;height:36px;border-radius:50%}
 form>label{display:block;font-weight:700;margin:18px 0 8px}.segmented{display:grid;grid-template-columns:1fr 1fr;gap:8px}.segmented input{display:none}.segmented span{display:block;padding:12px;text-align:center;background:#f0f2f0;border-radius:12px}.segmented input:checked+span{background:var(--accent);color:white}
 textarea{width:100%;border:1px solid #dce1dc;border-radius:12px;padding:10px}.mealGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.mealGrid div{background:#f2f4f2;padding:12px;border-radius:12px}.mealGrid input{width:100%;border:0;background:white;border-radius:8px;padding:8px}
@@ -25,3 +25,11 @@ textarea{width:100%;border:1px solid #dce1dc;border-radius:12px;padding:10px}.me
 #gameAttendNoteBox textarea{width:100%}
 
 .friendshipCard{text-align:center}.friendshipCard h3{margin-top:0}.friendshipCard .line-btn,.friendshipCard .secondary{max-width:none}.friendshipError{margin-top:14px;padding:11px 12px;border-radius:12px;background:#fdebea;color:#9a332d;font-size:14px;text-align:left}
+
+.volunteerCard h4{margin:4px 0;font-size:18px}.volunteerPlayerLabel{display:grid;gap:6px;margin-top:12px;font-size:13px;font-weight:700}.volunteerPlayerLabel select{width:100%;border:1px solid #dce1dc;background:white;border-radius:10px;padding:10px}.volunteerCard button{margin-top:12px;border:0;background:var(--soft);color:var(--accent);font-weight:700;border-radius:12px;padding:11px;width:100%}.volunteerCard button:disabled{opacity:.5}
+
+.googleVolunteerCard{text-align:center;padding:26px 20px}
+.googleVolunteerIcon{font-size:46px;margin-bottom:8px}
+.googleVolunteerCard h3{font-size:22px;margin:6px 0 10px}
+.googleVolunteerCard p{line-height:1.6}
+.googleVolunteerCard .primary{max-width:none;margin-top:16px}

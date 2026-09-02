@@ -62,6 +62,26 @@
       <h3>待繳費</h3><div id="paymentsPreview"></div>
     </section>
 
+    <section id="volunteerPage" class="page hidden">
+      <h2>義工排班</h2>
+
+      <div class="card googleVolunteerCard">
+        <div class="googleVolunteerIcon">🙋</div>
+        <h3>義工出席登記</h3>
+        <p>
+          義工排班沿用原本的 Google 雲端義工系統，
+          請點下方按鈕查看尚未到期的日期並完成填寫。
+        </p>
+        <p class="muted">
+          填寫內容會直接寫入原本的 Google 義工出席表。
+        </p>
+
+        <button id="openVolunteerWebApp" class="primary">
+          開啟義工排班
+        </button>
+      </div>
+    </section>
+
     <section id="paymentsPage" class="page hidden">
       <h2>繳費紀錄</h2><p class="muted">查看目前應繳與已繳項目。</p><div id="payments"></div>
     </section>
@@ -85,6 +105,7 @@
 
   <nav>
     <button data-page="homePage" class="active"><span>🏠</span>首頁</button>
+    <button data-page="volunteerPage"><span>🙋</span>義工</button>
     <button data-page="paymentsPage"><span>💰</span>繳費</button>
     <button data-page="profilePage"><span>👤</span>我的</button>
   </nav>

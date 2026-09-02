@@ -139,7 +139,19 @@ async function confirmExtraBinding(){
     // Return user to profile page after reload.
     document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
     $("profilePage").classList.remove("hidden");
-    document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
+    
+function volunteerWeekday(d){return ["日","一","二","三","四","五","六"][new Date(d+"T00:00:00").getDay()]};
+async function loadVolunteers(){
+  const d=await api("/api/volunteers"),players=d.players||[];
+  $("volunteerList").innerHTML=(d.slots||[]).map(s=>{
+    const full=Number(s.signup_count)>=Number(s.capacity), mine=!!s.signed_by_me;
+    return `<div class="card volunteerCard"><div class="top"><div><div>${s.volunteer_date}（${volunteerWeekday(s.volunteer_date)}）</div><h4>${s.group_name}義工</h4></div><span class="status ${mine?"paid":full?"unpaid":""}">${mine?"已登記":full?"已額滿":`${s.signup_count}/${s.capacity}`}</span></div>${s.note?`<div class="meta">📝 ${s.note}</div>`:""}${mine?`<button onclick="cancelVolunteer(${s.id})">取消登記</button>`:full||s.status!=="open"?`<button disabled>目前無法登記</button>`:`<label class="volunteerPlayerLabel">以哪位球員家庭登記<select id="volunteerPlayer_${s.id}">${players.map(p=>`<option value="${p.id}">${p.name}/${p.team}</option>`).join("")}</select></label><button onclick="signupVolunteer(${s.id})">登記義工</button>`}</div>`
+  }).join("")||`<div class="card muted">目前沒有開放中的義工時段</div>`;
+}
+window.signupVolunteer=async id=>{const el=$("volunteerPlayer_"+id);try{await api(`/api/volunteers/${id}/signup`,{method:"POST",body:JSON.stringify({player_id:el&&el.value?Number(el.value):null})});toast("義工登記完成");await loadVolunteers()}catch(e){toast(e.message)}};
+window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎？"))return;try{await api(`/api/volunteers/${id}/signup`,{method:"DELETE"});toast("已取消義工登記");await loadVolunteers()}catch(e){toast(e.message)}};
+
+document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
     const profileNav=document.querySelector('nav button[data-page="profilePage"]');
     if(profileNav)profileNav.classList.add("active");
 
@@ -210,7 +222,7 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("even
   player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
   parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
 })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
-document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active")});
+document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active");});
 
 const extraPreviewBtn=$("extraPreviewBindBtn");
 if(extraPreviewBtn)extraPreviewBtn.onclick=previewExtraBinding;
@@ -248,6 +260,36 @@ if(recheckFriendBtn){
       if(ok){toast("好友狀態確認完成");await loadApp()}
     }catch(e){toast(e.message)}
   };
+}
+
+
+function openGoogleVolunteerApp(){
+  const url=config.volunteer_url;
+  if(!url){
+    return toast("尚未設定義工排班網址");
+  }
+
+  try{
+    if(typeof liff!=="undefined" &&
+       typeof liff.isInClient==="function" &&
+       liff.isInClient() &&
+       typeof liff.openWindow==="function"){
+      liff.openWindow({
+        url:url,
+        external:false
+      });
+      return;
+    }
+  }catch(e){
+    console.warn("LIFF openWindow failed:",e);
+  }
+
+  window.location.href=url;
+}
+
+const openVolunteerBtn=$("openVolunteerWebApp");
+if(openVolunteerBtn){
+  openVolunteerBtn.onclick=openGoogleVolunteerApp;
 }
 
 start();

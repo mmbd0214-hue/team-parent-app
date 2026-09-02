@@ -116,3 +116,5 @@ dialog{border:0;border-radius:20px;width:min(620px,calc(100% - 24px));padding:0;
   gap:6px;
   flex-wrap:wrap;
 }
+
+#volunteerForm .messageChecks{margin:8px 0 14px}#volunteerForm label{margin-top:12px}

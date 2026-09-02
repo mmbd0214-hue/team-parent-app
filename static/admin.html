@@ -14,6 +14,7 @@
 <button data-page="parents">👨‍👩‍👧 家長</button>
 <button data-page="events">📅 活動 / 比賽</button>
 <button data-page="payments">💰 繳費</button>
+<button data-page="volunteers">🙋 義工排班</button>
 <button data-page="messages">📨 訊息中心</button>
 </nav></aside>
 
@@ -134,6 +135,20 @@
   </div>
 </section>
 
+<section id="volunteers" class="page hidden">
+  <div class="toolbar">
+    <div>
+      <h2>義工排班</h2>
+      <p class="muted">義工排班資料沿用原本 Google 雲端義工出席表。</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Google 義工排班系統</h3>
+    <p>查看、填寫或管理既有的義工排班資料。</p>
+    <button id="adminOpenVolunteerWebApp">開啟 Google 義工排班</button>
+  </div>
+</section>
 </main>
 </div>
 
@@ -219,5 +234,6 @@
 <div class="actions"><button type="button" onclick="paymentDialog.close()" class="ghost">取消</button><button>建立</button></div>
 </form></dialog>
 
+<dialog id="volunteerDialog"><form id="volunteerForm"><h2>新增義工日期</h2><label>日期<input id="volunteerDateInput" type="date" required></label><label>組別</label><div class="messageChecks"><label class="check"><input type="checkbox" name="volunteerGroup" value="少棒" checked> 少棒</label><label class="check"><input type="checkbox" name="volunteerGroup" value="青少棒" checked> 青少棒</label></div><label>每組需要人數<input id="volunteerCapacityInput" type="number" min="1" max="10" value="1"></label><label>備註<input id="volunteerNoteInput" placeholder="例如：協助收費、訂午餐"></label><div class="actions"><button type="button" onclick="volunteerDialog.close()" class="ghost">取消</button><button>建立</button></div></form></dialog>
 <div id="toast"></div><script src="/static/admin.js"></script>
 </body></html>

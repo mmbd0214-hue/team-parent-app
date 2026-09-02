@@ -23,6 +23,7 @@ LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
 LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "").strip()
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+VOLUNTEER_WEBAPP_URL = os.getenv("VOLUNTEER_WEBAPP_URL", "https://script.google.com/macros/s/AKfycbwRsh7TUzKrHldH5-YJV_wH6JvtNOEu78mx0z0a7wKlMi8-6hwrthgR5DcJLe_A5lQxyw/exec").strip()
 
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL 尚未設定")
@@ -153,6 +154,30 @@ def init_db():
             """)
 
             cur.execute("""
+            CREATE TABLE IF NOT EXISTS volunteer_slots (
+                id BIGSERIAL PRIMARY KEY,
+                volunteer_date DATE NOT NULL,
+                group_name TEXT NOT NULL,
+                capacity INTEGER NOT NULL DEFAULT 1,
+                note TEXT DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'open',
+                UNIQUE(volunteer_date, group_name)
+            )
+            """)
+
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS volunteer_signups (
+                id BIGSERIAL PRIMARY KEY,
+                slot_id BIGINT NOT NULL REFERENCES volunteer_slots(id) ON DELETE CASCADE,
+                parent_id BIGINT NOT NULL REFERENCES parents(id) ON DELETE CASCADE,
+                player_id BIGINT REFERENCES players(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE(slot_id, parent_id)
+            )
+            """)
+
+
+            cur.execute("""
             CREATE TABLE IF NOT EXISTS message_logs (
                 id BIGSERIAL PRIMARY KEY,
                 parent_id BIGINT REFERENCES parents(id) ON DELETE SET NULL,
@@ -239,7 +264,7 @@ def health():
 
 @app.get("/api/config")
 def config():
-    return {"liff_id": LINE_LIFF_ID, "mock_login": MOCK_LOGIN}
+    return {"liff_id": LINE_LIFF_ID, "mock_login": MOCK_LOGIN, "volunteer_url": VOLUNTEER_WEBAPP_URL}
 
 
 # ---------------- Parent LINE / LIFF auth ----------------
@@ -591,7 +616,18 @@ def player_payments(player_id: int, authorization: str | None = Header(default=N
             return cur.fetchall()
 
 
-# ---------------- Admin auth ----------------
+# ---------------- Volunteer ----------------\n\n@app.get("/api/volunteers")\ndef parent_volunteers(authorization: str | None = Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("""\n                SELECT vs.id,vs.volunteer_date::text,vs.group_name,vs.capacity,vs.note,vs.status,\n                       COUNT(vsg.id) signup_count,\n                       EXISTS(SELECT 1 FROM volunteer_signups x WHERE x.slot_id=vs.id AND x.parent_id=%s) signed_by_me\n                FROM volunteer_slots vs\n                LEFT JOIN volunteer_signups vsg ON vsg.slot_id=vs.id\n                WHERE vs.volunteer_date >= %s\n                GROUP BY vs.id\n                ORDER BY vs.volunteer_date,vs.group_name\n            """,(parent["id"],date.today()))\n            slots=cur.fetchall()\n            cur.execute("""\n                SELECT p.id,p.name,p.team,p.number\n                FROM players p JOIN parent_players pp ON pp.player_id=p.id\n                WHERE pp.parent_id=%s AND p.active=TRUE\n                ORDER BY p.team,p.name\n            """,(parent["id"],))\n            players=cur.fetchall()\n    return {"slots":slots,"players":players}\n\n\n@app.post("/api/volunteers/{slot_id}/signup")\ndef volunteer_signup(slot_id:int,body:VolunteerSignupIn,authorization:str|None=Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("SELECT * FROM volunteer_slots WHERE id=%s FOR UPDATE",(slot_id,))\n            slot=cur.fetchone()\n            if not slot: raise HTTPException(404,"找不到義工時段")\n            if slot["volunteer_date"] < date.today(): raise HTTPException(400,"此日期已過")\n            if slot["status"] != "open": raise HTTPException(400,"此義工時段已關閉")\n            if body.player_id is not None:\n                cur.execute("SELECT 1 FROM parent_players WHERE parent_id=%s AND player_id=%s",(parent["id"],body.player_id))\n                if not cur.fetchone(): raise HTTPException(403,"無權使用此球員資料")\n            cur.execute("SELECT 1 FROM volunteer_signups WHERE slot_id=%s AND parent_id=%s",(slot_id,parent["id"]))\n            if cur.fetchone(): raise HTTPException(409,"你已經登記此時段")\n            cur.execute("SELECT COUNT(*) n FROM volunteer_signups WHERE slot_id=%s",(slot_id,))\n            if cur.fetchone()["n"] >= slot["capacity"]: raise HTTPException(409,"此義工時段已額滿")\n            cur.execute("INSERT INTO volunteer_signups(slot_id,parent_id,player_id) VALUES(%s,%s,%s)",(slot_id,parent["id"],body.player_id))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.delete("/api/volunteers/{slot_id}/signup")\ndef cancel_volunteer_signup(slot_id:int,authorization:str|None=Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("DELETE FROM volunteer_signups WHERE slot_id=%s AND parent_id=%s",(slot_id,parent["id"]))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.get("/api/admin/volunteers")\ndef admin_volunteers(authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("""\n                SELECT vs.id,vs.volunteer_date::text,vs.group_name,vs.capacity,vs.note,vs.status,\n                       COUNT(vsg.id) signup_count,\n                       COALESCE(json_agg(json_build_object('parent_name',pa.display_name,'player_name',pl.name,'team',pl.team) ORDER BY pa.display_name)\n                         FILTER (WHERE vsg.id IS NOT NULL),'[]'::json) signups\n                FROM volunteer_slots vs\n                LEFT JOIN volunteer_signups vsg ON vsg.slot_id=vs.id\n                LEFT JOIN parents pa ON pa.id=vsg.parent_id\n                LEFT JOIN players pl ON pl.id=vsg.player_id\n                GROUP BY vs.id\n                ORDER BY vs.volunteer_date DESC,vs.group_name\n            """)\n            return cur.fetchall()\n\n\n@app.post("/api/admin/volunteers")\ndef create_volunteer_slots(body:VolunteerSlotIn,authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    groups=[g for g in body.groups if g in {"少棒","青少棒"}]\n    if not groups: raise HTTPException(400,"請至少選擇一個組別")\n    with db() as conn:\n        with conn.cursor() as cur:\n            for group in groups:\n                cur.execute("""\n                    INSERT INTO volunteer_slots(volunteer_date,group_name,capacity,note,status)\n                    VALUES(%s,%s,%s,%s,'open')\n                    ON CONFLICT(volunteer_date,group_name) DO UPDATE SET capacity=EXCLUDED.capacity,note=EXCLUDED.note\n                """,(body.volunteer_date,group,max(1,body.capacity),body.note.strip()))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.put("/api/admin/volunteers/{slot_id}/status")\ndef volunteer_status(slot_id:int,status:str=Query(...),authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    if status not in ("open","closed"): raise HTTPException(400,"status 錯誤")\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("UPDATE volunteer_slots SET status=%s WHERE id=%s RETURNING id",(status,slot_id))\n            row=cur.fetchone()\n        conn.commit()\n    if not row: raise HTTPException(404,"找不到義工時段")\n    return {"ok":True}\n\n\n@app.delete("/api/admin/volunteers/{slot_id}")\ndef delete_volunteer_slot(slot_id:int,authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("DELETE FROM volunteer_slots WHERE id=%s RETURNING id",(slot_id,))\n            row=cur.fetchone()\n        conn.commit()\n    if not row: raise HTTPException(404,"找不到義工時段")\n    return {"ok":True}\n\n\n# ---------------- Admin auth ----------------
+
+class VolunteerSignupIn(BaseModel):
+    player_id: int | None = None
+
+
+class VolunteerSlotIn(BaseModel):
+    volunteer_date: str
+    groups: list[str] = ["少棒", "青少棒"]
+    capacity: int = 1
+    note: str = ""
+
 
 class AdminLogin(BaseModel):
     password: str
