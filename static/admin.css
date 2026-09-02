@@ -85,3 +85,34 @@ dialog{border:0;border-radius:20px;width:min(620px,calc(100% - 24px));padding:0;
   .conversationLayout{grid-template-columns:1fr}
   .conversationList{border-right:0;border-bottom:1px solid var(--border);max-height:220px}
 }
+
+
+.messageSummaryCard{
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:12px 14px;
+  margin-bottom:9px;
+  background:#fff;
+}
+.messageSummaryTop{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.messageSummaryTime{
+  color:var(--muted);
+  font-size:11px;
+  white-space:nowrap;
+}
+.messageSummaryText{
+  color:#39443d;
+  font-size:13px;
+  line-height:1.5;
+  margin:7px 0 9px;
+}
+.messageSummaryStats{
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+}

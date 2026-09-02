@@ -167,6 +167,9 @@ def init_db():
             )
             """)
 
+            cur.execute("ALTER TABLE message_logs ADD COLUMN IF NOT EXISTS batch_id TEXT")
+
+
             cur.execute("""
             CREATE TABLE IF NOT EXISTS inbound_messages (
                 id BIGSERIAL PRIMARY KEY,
@@ -1484,9 +1487,9 @@ async def send_admin_message(
                     INSERT INTO message_logs(
                         parent_id,line_user_id,recipient_name,
                         target_type,target_label,message_text,
-                        status,error_message
+                        status,error_message,batch_id
                     )
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
                     recipient["id"],
                     recipient["line_user_id"],
@@ -1496,6 +1499,7 @@ async def send_admin_message(
                     message,
                     "sent" if ok else "failed",
                     error,
+                    batch_id,
                 ))
             conn.commit()
 
@@ -1510,7 +1514,7 @@ async def send_admin_message(
 
 @app.get("/api/admin/messages/logs")
 def admin_message_logs(
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=200),
     authorization: str | None = Header(default=None),
 ):
     require_admin(authorization)
@@ -1518,10 +1522,26 @@ def admin_message_logs(
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id,parent_id,recipient_name,target_type,target_label,
-                       message_text,status,error_message,sent_at
-                FROM message_logs
-                ORDER BY sent_at DESC,id DESC
+                WITH grouped AS (
+                    SELECT
+                        COALESCE(batch_id, 'legacy-' || id::text) AS group_id,
+                        MIN(sent_at) AS sent_at,
+                        target_type,
+                        target_label,
+                        message_text,
+                        COUNT(*) AS recipient_count,
+                        COUNT(*) FILTER (WHERE status='sent') AS sent_count,
+                        COUNT(*) FILTER (WHERE status='failed') AS failed_count
+                    FROM message_logs
+                    GROUP BY
+                        COALESCE(batch_id, 'legacy-' || id::text),
+                        target_type,
+                        target_label,
+                        message_text
+                )
+                SELECT *
+                FROM grouped
+                ORDER BY sent_at DESC
                 LIMIT %s
             """, (limit,))
             return cur.fetchall()
@@ -1713,16 +1733,17 @@ async def reply_admin_conversation(
                 INSERT INTO message_logs(
                     parent_id,line_user_id,recipient_name,
                     target_type,target_label,message_text,
-                    status,error_message
+                    status,error_message,batch_id
                 )
-                VALUES(%s,%s,%s,'parent','單一家長',%s,%s,%s)
+                VALUES(%s,%s,%s,'parent','單一家長',%s,%s,%s,%s)
             """, (
                 parent["id"] if parent else None,
                 line_user_id,
                 parent["display_name"] if parent else "未登錄 LINE 使用者",
                 message,
                 "sent" if ok else "failed",
-                error
+                error,
+                secrets.token_hex(12)
             ))
         conn.commit()
 

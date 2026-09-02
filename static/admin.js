@@ -243,10 +243,35 @@ async function previewMessageRecipients(){
 }
 
 async function loadMessageLogs(){
-  const rows=await api("/api/admin/messages/logs?limit=100");
-  $("messageLogs").innerHTML=`<div class="tableWrap"><table><thead><tr><th>時間</th><th>家長</th><th>對象</th><th>訊息</th><th>結果</th></tr></thead><tbody>${
-    rows.map(x=>`<tr><td>${new Date(x.sent_at).toLocaleString("zh-TW")}</td><td>${x.recipient_name||"-"}</td><td>${x.target_label||x.target_type}</td><td class="messageLogText">${x.message_text||""}</td><td><span class="tag ${x.status==="sent"?"green":"red"}">${x.status==="sent"?"成功":"失敗"}</span>${x.error_message?`<div class="muted">${x.error_message}</div>`:""}</td></tr>`).join("")||'<tr><td colspan="5">尚無訊息紀錄</td></tr>'
-  }</tbody></table></div>`;
+  const rows=await api("/api/admin/messages/logs?limit=50");
+
+  $("messageLogs").innerHTML=rows.map(x=>{
+    const text=(x.message_text||"").replace(/\s+/g," ").trim();
+    const preview=text.length>70?text.slice(0,70)+"…":text;
+    const target=x.target_label||(
+      x.target_type==="all"?"全部家長":
+      x.target_type==="team"?"依組別":
+      "指定家長"
+    );
+
+    return `
+      <div class="messageSummaryCard">
+        <div class="messageSummaryTop">
+          <strong>${escapeHtml(target)}</strong>
+          <span class="messageSummaryTime">${new Date(x.sent_at).toLocaleString("zh-TW")}</span>
+        </div>
+
+        <div class="messageSummaryText">${escapeHtml(preview)}</div>
+
+        <div class="messageSummaryStats">
+          <span class="tag">收件 ${x.recipient_count}</span>
+          <span class="tag green">成功 ${x.sent_count}</span>
+          ${Number(x.failed_count)>0
+            ? `<span class="tag red">失敗 ${x.failed_count}</span>`
+            : ""}
+        </div>
+      </div>`;
+  }).join("") || `<div class="muted">尚無發送紀錄</div>`;
 }
 
 async function loadMessages(){
