@@ -136,7 +136,8 @@
 <label>地點<input id="eventLocationInput" required></label>
 <div class="grid2"><label>集合時間<input id="eventMeetTimeInput" type="time"></label><label class="check timeTbd"><input id="eventMeetTimeTbdInput" type="checkbox"> 集合時間未定</label></div>
 <div class="matchHeader"><strong>比賽場次</strong><button type="button" class="ghost" onclick="addMatchRow()">＋ 新增場次</button></div><div id="matchRows" class="matchRows"></div>
-<div class="grid2"><label>類型<select id="eventTypeInput"><option value="practice">練球</option><option value="game">比賽</option><option value="event">活動</option></select></label><label>餐費/份<input id="eventMealInput" type="number" min="0" value="100"></label></div>
+<div class="grid2"><label>類型<select id="eventTypeInput"><option value="practice">練球</option><option value="game">比賽</option><option value="event">活動</option></select></label><label id="eventMealPriceWrap">餐費/份<input id="eventMealInput" type="number" min="0" value="100"></label></div>
+<label class="check"><input id="eventMealEnabledInput" type="checkbox" checked> 開放訂餐</label>
 <label id="eventStatusLabel" class="hidden">狀態<select id="eventStatusInput"><option value="open">開放</option><option value="closed">關閉</option></select></label>
 <div class="toolbar small"><strong>通知 / 調查球員</strong><div><button type="button" class="ghost" onclick="toggleAllPlayers(true)">全選</button><button type="button" class="ghost" onclick="toggleAllPlayers(false)">全不選</button></div></div>
 <div id="eventPlayerChoices" class="choices"></div>

@@ -100,6 +100,7 @@ def init_db():
 
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'practice'")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS response_deadline DATE")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS meal_enabled BOOLEAN NOT NULL DEFAULT TRUE")
 
             cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS practice_duration TEXT DEFAULT 'full'")
             cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS attendance_note TEXT DEFAULT ''")
@@ -500,13 +501,18 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
                 raise HTTPException(403, "此球員不在本活動名單")
 
             cur.execute("""
-                SELECT 1 FROM events
+                SELECT meal_enabled
+                FROM events
                 WHERE id=%s AND status='open'
                   AND (response_deadline IS NULL OR response_deadline >= %s)
             """, (event_id, date.today()))
 
-            if not cur.fetchone():
+            event_row = cur.fetchone()
+            if not event_row:
                 raise HTTPException(403, "活動已截止")
+
+            player_meals = body.player_meals if event_row["meal_enabled"] else 0
+            parent_meals = body.parent_meals if event_row["meal_enabled"] else 0
 
             cur.execute("""
                 INSERT INTO attendance(
@@ -526,7 +532,7 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
                 event_id,body.player_id,body.attendance_status,
                 body.leave_reason.strip(),body.practice_duration,
                 body.attendance_note.strip(),
-                body.player_meals,body.parent_meals
+                player_meals,parent_meals
             ))
 
         conn.commit()
@@ -610,6 +616,7 @@ class EventIn(BaseModel):
     title: str
     event_date: str
     location: str
+    meal_enabled: bool = True
     meal_price: int = 0
     event_type: str = "practice"
     response_deadline: str | None = None
@@ -978,7 +985,7 @@ def create_event(body: EventIn, authorization: str | None = Header(default=None)
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO events(title,event_date,location,meal_price,event_type,response_deadline,meet_time,meet_time_tbd)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
             """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,body.response_deadline or None,
                   None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd))
             event=cur.fetchone()

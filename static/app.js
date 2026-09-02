@@ -154,7 +154,7 @@ function renderEvents(){
     const a=state.attendance[ev.id],ans=a?(a.attendance_status==="attend"?"✅ 已登記出席":a.attendance_status==="leave"?"請假":"未確定"):"尚未回覆";
     const meet=ev.meet_time_tbd?"未定":(ev.meet_time||"未定");
     const matches=(ev.matches||[]).map((m,i)=>`<div class="matchLine"><strong>第${i+1}場</strong>　${m.game_time_tbd?"未定":(m.game_time||"未定")}　🆚 ${m.opponent||"未定"}</div>`).join("");
-    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}<div class="meta">🍱 ${money(ev.meal_price)}/份</div><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button></div>`
+    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}${ev.meal_enabled===false?"":`<div class="meta">🍱 ${money(ev.meal_price)}/份</div>`}<button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button></div>`
   }).join("")||`<div class="card muted">目前沒有活動</div>`
 }
 function renderPayments(rows){const card=p=>`<div class="card payment"><div><strong>${p.title}</strong><div class="meta">${p.due_date||""}</div></div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></div></div></div>`;$("payments").innerHTML=rows.map(card).join("")||`<div class="card">目前沒有繳費項目</div>`;const u=rows.filter(x=>x.status!=="paid");$("paymentsPreview").innerHTML=u.slice(0,3).map(card).join("")||`<div class="card">目前沒有待繳費用</div>`}
@@ -179,8 +179,9 @@ window.openEvent=id=>{
   const dr=document.querySelector(`input[name=practiceDuration][value=${duration}]`);
   if(dr)dr.checked=true;
 
-  $("playerMeals").value=a?.player_meals??1;
-  $("parentMeals").value=a?.parent_meals??0;
+  $("mealSection").classList.toggle("hidden",ev.meal_enabled===false);
+  $("playerMeals").value=ev.meal_enabled===false?0:(a?.player_meals??1);
+  $("parentMeals").value=ev.meal_enabled===false?0:(a?.parent_meals??0);
 
   toggleAttendanceOptions();
   eventDialog.showModal();
@@ -206,8 +207,8 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("even
   leave_reason:$("leaveReason").value,
   practice_duration:document.querySelector("input[name=practiceDuration]:checked")?.value||"full",
   attendance_note:$("attendanceNote").value,
-  player_meals:Number($("playerMeals").value),
-  parent_meals:Number($("parentMeals").value)
+  player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
+  parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
 })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 document.querySelectorAll("nav button").forEach(btn=>btn.onclick=()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active")});
 
