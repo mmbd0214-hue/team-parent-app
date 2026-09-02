@@ -344,7 +344,20 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("even
   player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
   parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
 })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
-document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));$(btn.dataset.page).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active");if(btn.dataset.page==="announcementsPage")await loadAnnouncements();});
+document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
+  document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
+  $(btn.dataset.page).classList.remove("hidden");
+  document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+
+  if(btn.dataset.page==="announcementsPage"){
+    await loadAnnouncements();
+  }
+
+  if(btn.dataset.page==="volunteerPage"){
+    // Google 義工頁不需要額外 API 載入
+  }
+});
 
 const extraPreviewBtn=$("extraPreviewBindBtn");
 if(extraPreviewBtn)extraPreviewBtn.onclick=previewExtraBinding;
