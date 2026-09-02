@@ -152,34 +152,41 @@ window.signupVolunteer=async id=>{const el=$("volunteerPlayer_"+id);try{await ap
 window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎？"))return;try{await api(`/api/volunteers/${id}/signup`,{method:"DELETE"});toast("已取消義工登記");await loadVolunteers()}catch(e){toast(e.message)}};
 
 
-function announcementTargetLabel(a){
-  if(a.target_type==="all")return "全部";
-  if(a.target_type==="team")return (a.target_values||[]).join("、") || "組別";
-  return "指定家長";
+function normalizeAnnouncementTargets(value){
+  if(Array.isArray(value)) return value.map(String);
+
+  if(value===null || value===undefined || value==="") return [];
+
+  // PostgreSQL JSONB normally arrives as an array, but legacy data may
+  // occasionally arrive as a JSON string or plain text.
+  if(typeof value==="string"){
+    const s=value.trim();
+
+    if(!s) return [];
+
+    try{
+      const parsed=JSON.parse(s);
+      if(Array.isArray(parsed)) return parsed.map(String);
+    }catch{}
+
+    return s
+      .replace(/[\[\]"']/g,"")
+      .split(/[、,，/ ]+/)
+      .map(x=>x.trim())
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
-async function loadAnnouncements(){
-  const rows=await api("/api/announcements");
+function announcementTargetLabel(a){
+  const type=a?.target_type || "all";
+  const targets=normalizeAnnouncementTargets(a?.target_values);
 
-  $("announcementList").innerHTML=(rows||[]).map(a=>{
-    const dt=new Date(a.created_at);
-    const title=a.title?.trim() || "球隊通知";
-
-    return `
-      <div class="card announcementCard">
-        <div class="announcementTop">
-          <div>
-            <div class="announcementDate">${dt.toLocaleString("zh-TW")}</div>
-            <h3>${escapeParentHtml(title)}</h3>
-          </div>
-          <span class="tag">${escapeParentHtml(announcementTargetLabel(a))}</span>
-        </div>
-
-        <div class="announcementText">
-          ${escapeParentHtml(a.message_text||"").replace(/\n/g,"<br>")}
-        </div>
-      </div>`;
-  }).join("") || `<div class="card muted">目前沒有公告</div>`;
+  if(type==="all") return "全部";
+  if(type==="team") return targets.length ? targets.join("、") : "組別";
+  if(type==="parent") return "指定家長";
+  return "球隊通知";
 }
 
 function escapeParentHtml(text){
@@ -189,6 +196,81 @@ function escapeParentHtml(text){
     .replaceAll(">","&gt;")
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#039;");
+}
+
+async function loadAnnouncements(){
+  const box=$("announcementList");
+  if(!box) return;
+
+  box.innerHTML=`<div class="card muted">公告載入中...</div>`;
+
+  try{
+    const data=await api("/api/announcements");
+
+    // Defensive handling in case an older backend returns an object wrapper.
+    const rows=Array.isArray(data)
+      ? data
+      : Array.isArray(data?.announcements)
+        ? data.announcements
+        : [];
+
+    console.log("announcements loaded:", rows);
+
+    if(!rows.length){
+      box.innerHTML=`<div class="card muted">目前沒有公告</div>`;
+      return;
+    }
+
+    const cards=[];
+
+    for(const raw of rows){
+      if(!raw || typeof raw!=="object") continue;
+
+      const a={
+        ...raw,
+        target_values:normalizeAnnouncementTargets(raw.target_values)
+      };
+
+      let dateText="";
+      if(a.created_at){
+        const dt=new Date(a.created_at);
+        dateText=Number.isNaN(dt.getTime())
+          ? String(a.created_at)
+          : dt.toLocaleString("zh-TW");
+      }
+
+      const title=String(a.title||"").trim() || "球隊通知";
+      const message=String(a.message_text||"");
+
+      cards.push(`
+        <div class="card announcementCard">
+          <div class="announcementTop">
+            <div>
+              <div class="announcementDate">${escapeParentHtml(dateText)}</div>
+              <h3>${escapeParentHtml(title)}</h3>
+            </div>
+            <span class="tag">${escapeParentHtml(announcementTargetLabel(a))}</span>
+          </div>
+
+          <div class="announcementText">
+            ${escapeParentHtml(message).replace(/\n/g,"<br>")}
+          </div>
+        </div>
+      `);
+    }
+
+    box.innerHTML=cards.join("") || `<div class="card muted">目前沒有公告</div>`;
+
+  }catch(e){
+    console.error("loadAnnouncements failed:",e);
+    box.innerHTML=`
+      <div class="card">
+        <strong>公告載入失敗</strong>
+        <div class="muted" style="margin-top:6px">
+          ${escapeParentHtml(e?.message||"未知錯誤")}
+        </div>
+      </div>`;
+  }
 }
 
 document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
