@@ -256,4 +256,54 @@
 
 <dialog id="volunteerDialog"><form id="volunteerForm"><h2>新增義工日期</h2><label>日期<input id="volunteerDateInput" type="date" required></label><label>組別</label><div class="messageChecks"><label class="check"><input type="checkbox" name="volunteerGroup" value="少棒" checked> 少棒</label><label class="check"><input type="checkbox" name="volunteerGroup" value="青少棒" checked> 青少棒</label></div><label>每組需要人數<input id="volunteerCapacityInput" type="number" min="1" max="10" value="1"></label><label>備註<input id="volunteerNoteInput" placeholder="例如：協助收費、訂午餐"></label><div class="actions"><button type="button" onclick="volunteerDialog.close()" class="ghost">取消</button><button>建立</button></div></form></dialog>
 <div id="toast"></div><script src="/static/admin.js"></script>
+
+<div id="announcementEditModal" class="modal hidden">
+  <div class="modalBackdrop" data-close-announcement-edit></div>
+  <div class="modalCard announcementEditCard">
+    <div class="toolbar">
+      <h3>編輯 App 公告</h3>
+      <button type="button" class="ghost" data-close-announcement-edit>✕</button>
+    </div>
+
+    <input id="editAnnouncementId" type="hidden">
+
+    <label>公告標題
+      <input id="editAnnouncementTitle" placeholder="例如：本週練球通知">
+    </label>
+
+    <label>公告內容
+      <textarea id="editAnnouncementText" rows="8"></textarea>
+    </label>
+
+    <label>公告對象
+      <select id="editAnnouncementTargetType">
+        <option value="all">全部家長</option>
+        <option value="team">依組別</option>
+        <option value="parent">原指定家長</option>
+      </select>
+    </label>
+
+    <div id="editAnnouncementTeams" class="hidden">
+      <div class="muted">組別可複選</div>
+      <div class="checkGrid">
+        <label class="check"><input type="checkbox" value="U10"> U10</label>
+        <label class="check"><input type="checkbox" value="U12"> U12</label>
+        <label class="check"><input type="checkbox" value="U13"> U13</label>
+        <label class="check"><input type="checkbox" value="U15"> U15</label>
+      </div>
+    </div>
+
+    <label class="check">
+      <input id="editAnnouncementActive" type="checkbox" checked>
+      在家長 App 顯示
+    </label>
+
+    <div class="modalActions">
+      <button type="button" class="ghost" data-close-announcement-edit>取消</button>
+      <button type="button" id="saveAnnouncementEditBtn">儲存修改</button>
+    </div>
+
+    <p class="muted">※ 修改只會更新 App 公告，不會修改或收回已發出的 LINE 訊息。</p>
+  </div>
+</div>
 </body></html>

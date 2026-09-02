@@ -497,6 +497,7 @@ async function loadAdminAnnouncements(){
         </div>
 
         <div class="rowActions">
+          <button onclick="openAnnouncementEdit(${a.id})">編輯</button>
           <button onclick="toggleAnnouncement(${a.id},${a.active?'false':'true'})">
             ${a.active?"隱藏":"重新顯示"}
           </button>
@@ -505,6 +506,118 @@ async function loadAdminAnnouncements(){
       </div>`;
   }).join("") || `<div class="muted">尚無 App 公告</div>`;
 }
+
+
+let adminAnnouncementCache=[];
+
+function normalizeAdminAnnouncementTargets(value){
+  if(Array.isArray(value)) return value.map(String);
+  if(value===null || value===undefined || value==="") return [];
+  if(typeof value==="string"){
+    try{
+      const parsed=JSON.parse(value);
+      if(Array.isArray(parsed)) return parsed.map(String);
+    }catch{}
+    return value.split(/[、,，/ ]+/).map(x=>x.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+function closeAnnouncementEdit(){
+  $("announcementEditModal")?.classList.add("hidden");
+}
+
+window.openAnnouncementEdit=async id=>{
+  let a=adminAnnouncementCache.find(x=>Number(x.id)===Number(id));
+
+  if(!a){
+    const rows=await api("/api/admin/announcements");
+    adminAnnouncementCache=Array.isArray(rows)?rows:[];
+    a=adminAnnouncementCache.find(x=>Number(x.id)===Number(id));
+  }
+
+  if(!a){
+    toast("找不到公告");
+    return;
+  }
+
+  $("editAnnouncementId").value=a.id;
+  $("editAnnouncementTitle").value=a.title||"";
+  $("editAnnouncementText").value=a.message_text||"";
+  $("editAnnouncementTargetType").value=a.target_type||"all";
+  $("editAnnouncementActive").checked=a.active!==false;
+
+  const targets=normalizeAdminAnnouncementTargets(a.target_values);
+  document.querySelectorAll("#editAnnouncementTeams input[type=checkbox]").forEach(cb=>{
+    cb.checked=targets.includes(cb.value);
+  });
+
+  updateAnnouncementEditTargetUI();
+  $("announcementEditModal").classList.remove("hidden");
+};
+
+function updateAnnouncementEditTargetUI(){
+  const type=$("editAnnouncementTargetType")?.value;
+  $("editAnnouncementTeams")?.classList.toggle("hidden",type!=="team");
+
+  // 指定家長公告保留原本 target_values，避免編輯文字時意外改掉收件人。
+  const select=$("editAnnouncementTargetType");
+  if(select){
+    const parentOption=[...select.options].find(o=>o.value==="parent");
+    if(parentOption) parentOption.disabled=select.value!=="parent";
+  }
+}
+
+$("editAnnouncementTargetType")?.addEventListener("change",updateAnnouncementEditTargetUI);
+
+document.querySelectorAll("[data-close-announcement-edit]").forEach(el=>{
+  el.addEventListener("click",closeAnnouncementEdit);
+});
+
+$("saveAnnouncementEditBtn")?.addEventListener("click",async()=>{
+  const id=Number($("editAnnouncementId").value);
+  const existing=adminAnnouncementCache.find(x=>Number(x.id)===id);
+
+  const targetType=$("editAnnouncementTargetType").value;
+  let targetValues=[];
+
+  if(targetType==="team"){
+    targetValues=[...document.querySelectorAll("#editAnnouncementTeams input:checked")]
+      .map(cb=>cb.value);
+  }else if(targetType==="parent"){
+    targetValues=normalizeAdminAnnouncementTargets(existing?.target_values);
+  }
+
+  const body={
+    title:$("editAnnouncementTitle").value.trim(),
+    message_text:$("editAnnouncementText").value.trim(),
+    target_type:targetType,
+    target_values:targetValues,
+    active:$("editAnnouncementActive").checked
+  };
+
+  if(!body.message_text){
+    toast("公告內容不可空白");
+    return;
+  }
+
+  if(targetType==="team" && !targetValues.length){
+    toast("請至少選擇一個組別");
+    return;
+  }
+
+  try{
+    await api(`/api/admin/announcements/${id}`,{
+      method:"PUT",
+      body:JSON.stringify(body)
+    });
+    toast("公告已更新");
+    closeAnnouncementEdit();
+    await loadAdminAnnouncements();
+  }catch(e){
+    toast(e.message);
+  }
+});
 
 window.toggleAnnouncement=async(id,active)=>{
   try{

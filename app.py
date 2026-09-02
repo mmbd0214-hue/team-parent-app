@@ -1096,6 +1096,14 @@ class NotifyIn(BaseModel):
     primary_only: bool = False
 
 
+class AnnouncementUpdateIn(BaseModel):
+    title: str = ""
+    message_text: str
+    target_type: str = "all"
+    target_values: list[str] = []
+    active: bool = True
+
+
 class MessageSendIn(BaseModel):
     target_type: str = "all"
     announcement_title: str = ""
@@ -2287,6 +2295,58 @@ def admin_announcements(
                 LIMIT 200
             """)
             return cur.fetchall()
+
+
+@app.put("/api/admin/announcements/{announcement_id}")
+def edit_announcement(
+    announcement_id: int,
+    body: AnnouncementUpdateIn,
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    message_text = body.message_text.strip()
+    if not message_text:
+        raise HTTPException(400, "公告內容不可空白")
+
+    allowed_types = {"all", "team", "parent"}
+    if body.target_type not in allowed_types:
+        raise HTTPException(400, "公告對象格式錯誤")
+
+    target_values = [str(x).strip() for x in body.target_values if str(x).strip()]
+
+    if body.target_type == "team":
+        allowed_teams = {"U10", "U12", "U13", "U15"}
+        target_values = [x for x in target_values if x in allowed_teams]
+        if not target_values:
+            raise HTTPException(400, "請至少選擇一個組別")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE announcements
+                SET title=%s,
+                    message_text=%s,
+                    target_type=%s,
+                    target_values=%s::jsonb,
+                    active=%s
+                WHERE id=%s
+                RETURNING id
+            """, (
+                body.title.strip(),
+                message_text,
+                body.target_type,
+                json.dumps(target_values, ensure_ascii=False),
+                body.active,
+                announcement_id,
+            ))
+            row = cur.fetchone()
+        conn.commit()
+
+    if not row:
+        raise HTTPException(404, "找不到公告")
+
+    return {"ok": True, "id": row["id"]}
 
 
 @app.put("/api/admin/announcements/{announcement_id}/active")

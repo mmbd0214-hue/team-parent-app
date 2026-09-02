@@ -134,3 +134,53 @@ dialog{border:0;border-radius:20px;width:min(620px,calc(100% - 24px));padding:0;
 @media(max-width:700px){
   .adminAnnouncementCard{grid-template-columns:1fr}
 }
+
+#announcementEditModal.modal{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+}
+#announcementEditModal.hidden{display:none}
+#announcementEditModal .modalBackdrop{
+  position:absolute;
+  inset:0;
+  background:rgba(0,0,0,.42);
+}
+.announcementEditCard{
+  position:relative;
+  width:min(620px,100%);
+  max-height:90vh;
+  overflow:auto;
+  background:#fff;
+  border-radius:16px;
+  padding:18px;
+  box-shadow:0 18px 60px rgba(0,0,0,.25);
+}
+.announcementEditCard label{display:block;margin:12px 0}
+.announcementEditCard input[type=text],
+.announcementEditCard input:not([type]),
+.announcementEditCard textarea,
+.announcementEditCard select{
+  width:100%;
+  box-sizing:border-box;
+  margin-top:6px;
+}
+.announcementEditCard .checkGrid{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:8px;
+  margin-top:8px;
+}
+.announcementEditCard .modalActions{
+  display:flex;
+  justify-content:flex-end;
+  gap:8px;
+  margin-top:16px;
+}
+@media(max-width:560px){
+  .announcementEditCard .checkGrid{grid-template-columns:repeat(2,1fr)}
+}
