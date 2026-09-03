@@ -7,7 +7,53 @@ function showLogin(){$("loginBox").classList.remove("hidden");$("adminApp").clas
 $("loginBtn").onclick=async()=>{try{const r=await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:$("adminPassword").value})});adminToken=r.token;sessionStorage.setItem("adminToken",adminToken);showAdmin();await loadAll()}catch(e){$("loginError").textContent=e.message}};
 $("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("loginBtn").click()});$("logoutBtn").onclick=()=>{sessionStorage.clear();adminToken="";showLogin()};
 const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心",volunteers:"義工排班"};
-window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadMessages();};
+
+async function loadLineQuota(){
+  const loading=$("lineQuotaLoading");
+  const content=$("lineQuotaContent");
+  const error=$("lineQuotaError");
+
+  if(!loading || !content || !error)return;
+
+  loading.classList.remove("hidden");
+  content.classList.add("hidden");
+  error.classList.add("hidden");
+
+  try{
+    const q=await api("/api/admin/line/quota");
+
+    $("lineQuotaUsage").textContent=Number(q.usage||0).toLocaleString("zh-TW");
+
+    if(q.type==="limited" && q.limit!==null){
+      $("lineQuotaLimit").textContent=Number(q.limit).toLocaleString("zh-TW");
+      $("lineQuotaRemaining").textContent=Number(q.remaining||0).toLocaleString("zh-TW");
+
+      const pct=Math.max(0,Math.min(100,Number(q.percent||0)));
+      $("lineQuotaBarFill").style.width=`${pct}%`;
+      $("lineQuotaMeta").textContent=`已使用 ${pct}% ・ LINE 回傳的本月用量為概算值`;
+
+      if(Number(q.remaining)===0){
+        $("lineQuotaMeta").textContent=`⚠️ 本月可發送額度已用完 ・ LINE 回傳的本月用量為概算值`;
+      }
+    }else{
+      $("lineQuotaLimit").textContent="未設定";
+      $("lineQuotaRemaining").textContent="—";
+      $("lineQuotaBarFill").style.width="0%";
+      $("lineQuotaMeta").textContent="LINE 回傳 type=none，目前沒有設定目標上限。";
+    }
+
+    loading.classList.add("hidden");
+    content.classList.remove("hidden");
+  }catch(e){
+    loading.classList.add("hidden");
+    error.textContent=`額度查詢失敗：${e.message}`;
+    error.classList.remove("hidden");
+  }
+}
+
+$("refreshLineQuotaBtn")?.addEventListener("click",loadLineQuota);
+
+window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadLineQuota();if(p==="messages")await loadMessages();};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 async function loadAll(){await Promise.all([loadPlayers(),loadParents(),loadEvents(),loadPayments(),loadDashboard()])}
 async function loadDashboard(){const d=await api("/api/admin/dashboard");$("stats").innerHTML=[["球員",d.players],["家長",d.parents],["未綁定家長",d.unbound_parents],["近期活動",d.events],["未回覆",d.pending_replies],["未收款",fmtMoney(d.unpaid)]].map(x=>`<div class="stat"><div class="l">${x[0]}</div><div class="k">${x[1]}</div></div>`).join("")}
@@ -307,7 +353,7 @@ async function loadMessages(){
     </label>`).join("");
 
   updateMessageTargetUI();
-  await loadMessageLogs();
+  await loadMessageLogs();await loadLineQuota();
 }
 
 $("messageTargetType").onchange=updateMessageTargetUI;

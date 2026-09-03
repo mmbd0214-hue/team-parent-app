@@ -47,6 +47,30 @@
 </section>
 
 <section id="messages" class="page hidden">
+      <div id="lineQuotaCard" class="card lineQuotaCard">
+        <div class="lineQuotaHead">
+          <div>
+            <div class="muted">LINE Messaging API</div>
+            <h3>本月訊息額度</h3>
+          </div>
+          <button id="refreshLineQuotaBtn" type="button" class="ghost">重新整理</button>
+        </div>
+
+        <div id="lineQuotaLoading" class="muted">正在查詢 LINE 額度...</div>
+
+        <div id="lineQuotaContent" class="hidden">
+          <div class="lineQuotaStats">
+            <div><span>本月上限</span><strong id="lineQuotaLimit">-</strong></div>
+            <div><span>已使用</span><strong id="lineQuotaUsage">-</strong></div>
+            <div><span>剩餘</span><strong id="lineQuotaRemaining">-</strong></div>
+          </div>
+          <div class="lineQuotaBar"><div id="lineQuotaBarFill"></div></div>
+          <div id="lineQuotaMeta" class="muted"></div>
+        </div>
+
+        <div id="lineQuotaError" class="hidden lineQuotaError"></div>
+      </div>
+
   <div class="toolbar">
     <div>
       <h2>LINE 訊息中心</h2>

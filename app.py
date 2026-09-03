@@ -1972,6 +1972,69 @@ async def push_text_message(user_id: str, message: str):
     return False, f"HTTP {r.status_code}: {r.text[:300]}"
 
 
+
+@app.get("/api/admin/line/quota")
+def admin_line_quota(
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        raise HTTPException(503, "尚未設定 LINE_CHANNEL_ACCESS_TOKEN")
+
+    headers = {
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+    }
+
+    try:
+        quota_resp = requests.get(
+            "https://api.line.me/v2/bot/message/quota",
+            headers=headers,
+            timeout=10,
+        )
+        usage_resp = requests.get(
+            "https://api.line.me/v2/bot/message/quota/consumption",
+            headers=headers,
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        raise HTTPException(502, f"無法連線 LINE Messaging API：{e}")
+
+    if quota_resp.status_code != 200:
+        raise HTTPException(
+            quota_resp.status_code,
+            f"LINE 額度查詢失敗：{quota_resp.text}"
+        )
+
+    if usage_resp.status_code != 200:
+        raise HTTPException(
+            usage_resp.status_code,
+            f"LINE 用量查詢失敗：{usage_resp.text}"
+        )
+
+    quota = quota_resp.json()
+    usage = usage_resp.json()
+
+    quota_type = quota.get("type", "none")
+    limit_value = quota.get("value") if quota_type == "limited" else None
+    total_usage = int(usage.get("totalUsage", 0) or 0)
+
+    remaining = None
+    percent = None
+    if limit_value is not None:
+        limit_value = int(limit_value)
+        remaining = max(limit_value - total_usage, 0)
+        percent = round((total_usage / limit_value) * 100, 1) if limit_value else 0
+
+    return {
+        "type": quota_type,
+        "limit": limit_value,
+        "usage": total_usage,
+        "remaining": remaining,
+        "percent": percent,
+    }
+
+
 @app.post("/api/admin/messages/send")
 async def send_admin_message(
     body: MessageSendIn,

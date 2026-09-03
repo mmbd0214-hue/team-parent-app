@@ -210,3 +210,17 @@ body.embeddedAdmin main{padding:14px}
   body.embeddedAdmin main{padding:10px}
   body.embeddedAdmin header{margin-bottom:10px}
 }
+
+.lineQuotaCard{margin-bottom:16px}
+.lineQuotaHead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.lineQuotaHead h3{margin:2px 0 0}
+.lineQuotaStats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.lineQuotaStats>div{padding:12px;border:1px solid #e5e7eb;border-radius:12px}
+.lineQuotaStats span{display:block;font-size:12px;color:#6b7280;margin-bottom:4px}
+.lineQuotaStats strong{font-size:22px}
+.lineQuotaBar{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin:14px 0 8px}
+#lineQuotaBarFill{height:100%;width:0;background:currentColor;border-radius:999px;transition:width .25s ease}
+.lineQuotaError{padding:10px 12px;border:1px solid #fecaca;border-radius:10px;margin-top:10px}
+@media(max-width:600px){
+  .lineQuotaStats{grid-template-columns:1fr}
+}
