@@ -1987,17 +1987,17 @@ def admin_line_quota(
     }
 
     try:
-        quota_resp = requests.get(
+        quota_resp = httpx.get(
             "https://api.line.me/v2/bot/message/quota",
             headers=headers,
             timeout=10,
         )
-        usage_resp = requests.get(
+        usage_resp = httpx.get(
             "https://api.line.me/v2/bot/message/quota/consumption",
             headers=headers,
             timeout=10,
         )
-    except requests.RequestException as e:
+    except httpx.RequestError as e:
         raise HTTPException(502, f"無法連線 LINE Messaging API：{e}")
 
     if quota_resp.status_code != 200:
