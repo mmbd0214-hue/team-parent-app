@@ -16,6 +16,7 @@
 <button data-page="payments">💰 繳費</button>
 <button data-page="volunteers">🙋 義工排班</button>
 <button data-page="messages">📨 訊息中心</button>
+<button data-page="announcements">📢 公告管理</button>
 </nav></aside>
 
 <main>
@@ -167,15 +168,49 @@
     </div>
   </div>
 
-  <div class="panel">
-    <div class="toolbar">
-      <div>
-        <h3>App 公告管理</h3>
-        <p class="muted">可以隱藏或刪除已同步到家長 App 的公告。</p>
-      </div>
-      <button id="refreshAnnouncementsBtn" class="ghost">重新整理</button>
+</section>
+
+<section id="announcements" class="page hidden">
+  <div class="toolbar">
+    <div>
+      <h2>📢 App 公告管理</h2>
+      <p class="muted">直接發布到家長 App，不會發送 LINE，也不會消耗 LINE 訊息額度。</p>
     </div>
-    <div id="adminAnnouncementList"></div>
+    <button id="refreshAnnouncementsBtn" class="ghost">重新整理</button>
+  </div>
+
+  <div class="messageGrid">
+    <div class="panel">
+      <h3>新增公告</h3>
+      <label>公告標題
+        <input id="newAnnouncementTitle" placeholder="例如：本週練球通知">
+      </label>
+      <label>公告對象
+        <select id="newAnnouncementTargetType">
+          <option value="all">全部家長</option>
+          <option value="team">依組別</option>
+        </select>
+      </label>
+      <div id="newAnnouncementTeams" class="hidden">
+        <label>組別（可複選）</label>
+        <div class="messageChecks">
+          <label class="check"><input type="checkbox" value="U10"> U10</label>
+          <label class="check"><input type="checkbox" value="U12"> U12</label>
+          <label class="check"><input type="checkbox" value="U13"> U13</label>
+          <label class="check"><input type="checkbox" value="U15"> U15</label>
+        </div>
+      </div>
+      <label>公告內容
+        <textarea id="newAnnouncementText" rows="9" placeholder="輸入要顯示在家長 App 的公告內容"></textarea>
+      </label>
+      <button id="publishAnnouncementBtn">📢 發布 App 公告</button>
+      <p class="muted">發布後，家長 App 的公告區會顯示此公告；新公告提示 NEW 也會依既有機制顯示。</p>
+    </div>
+
+    <div class="panel">
+      <h3>已發布公告</h3>
+      <div id="adminAnnouncementList"></div>
+    </div>
   </div>
 </section>
 

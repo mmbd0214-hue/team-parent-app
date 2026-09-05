@@ -2413,6 +2413,49 @@ def announcement_diagnostics(
     }
 
 
+@app.post("/api/admin/announcements")
+def create_announcement(
+    body: AnnouncementUpdateIn,
+    authorization: str | None = Header(default=None)
+):
+    require_admin(authorization)
+
+    message_text = body.message_text.strip()
+    if not message_text:
+        raise HTTPException(400, "公告內容不可空白")
+
+    if body.target_type not in {"all", "team"}:
+        raise HTTPException(400, "公告對象格式錯誤")
+
+    target_values = [str(x).strip() for x in body.target_values if str(x).strip()]
+    if body.target_type == "team":
+        allowed_teams = {"U10", "U12", "U13", "U15"}
+        target_values = [x for x in target_values if x in allowed_teams]
+        if not target_values:
+            raise HTTPException(400, "請至少選擇一個組別")
+    else:
+        target_values = []
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO announcements(
+                    title,message_text,target_type,target_values,active,created_at
+                ) VALUES (%s,%s,%s,%s::jsonb,%s,NOW())
+                RETURNING id
+            """, (
+                body.title.strip(),
+                message_text,
+                body.target_type,
+                json.dumps(target_values, ensure_ascii=False),
+                body.active,
+            ))
+            row = cur.fetchone()
+        conn.commit()
+
+    return {"ok": True, "id": row["id"]}
+
+
 @app.get("/api/admin/announcements")
 def admin_announcements(
     authorization: str | None = Header(default=None)

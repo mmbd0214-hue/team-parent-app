@@ -6,7 +6,7 @@ function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setT
 function showLogin(){$("loginBox").classList.remove("hidden");$("adminApp").classList.add("hidden")}function showAdmin(){$("loginBox").classList.add("hidden");$("adminApp").classList.remove("hidden")}
 $("loginBtn").onclick=async()=>{try{const r=await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:$("adminPassword").value})});adminToken=r.token;sessionStorage.setItem("adminToken",adminToken);showAdmin();await loadAll()}catch(e){$("loginError").textContent=e.message}};
 $("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("loginBtn").click()});$("logoutBtn").onclick=()=>{sessionStorage.clear();adminToken="";showLogin()};
-const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心",volunteers:"義工排班"};
+const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心",announcements:"公告管理",volunteers:"義工排班"};
 
 async function loadLineQuota(){
   const loading=$("lineQuotaLoading");
@@ -53,7 +53,7 @@ async function loadLineQuota(){
 
 $("refreshLineQuotaBtn")?.addEventListener("click",loadLineQuota);
 
-window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadLineQuota();if(p==="messages")await loadMessages();};
+window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadLineQuota();if(p==="messages")await loadMessages();if(p==="announcements")await loadAdminAnnouncements();};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 async function loadAll(){await Promise.all([loadPlayers(),loadParents(),loadEvents(),loadPayments(),loadDashboard()])}
 async function loadDashboard(){const d=await api("/api/admin/dashboard");$("stats").innerHTML=[["球員",d.players],["家長",d.parents],["未綁定家長",d.unbound_parents],["近期活動",d.events],["未回覆",d.pending_replies],["未收款",fmtMoney(d.unpaid)]].map(x=>`<div class="stat"><div class="l">${x[0]}</div><div class="k">${x[1]}</div></div>`).join("")}
@@ -538,6 +538,40 @@ if(adminVolunteerBtn){
 }
 
 
+
+function updateNewAnnouncementTargetUI(){
+  const isTeam=$("newAnnouncementTargetType")?.value==="team";
+  $("newAnnouncementTeams")?.classList.toggle("hidden",!isTeam);
+}
+
+$("newAnnouncementTargetType")?.addEventListener("change",updateNewAnnouncementTargetUI);
+
+$("publishAnnouncementBtn")?.addEventListener("click",async()=>{
+  const title=$("newAnnouncementTitle").value.trim();
+  const messageText=$("newAnnouncementText").value.trim();
+  const targetType=$("newAnnouncementTargetType").value;
+  const targetValues=targetType==="team"
+    ? [...document.querySelectorAll("#newAnnouncementTeams input:checked")].map(x=>x.value)
+    : [];
+
+  if(!messageText){toast("公告內容不可空白");return;}
+  if(targetType==="team" && !targetValues.length){toast("請至少選擇一個組別");return;}
+
+  try{
+    await api("/api/admin/announcements",{
+      method:"POST",
+      body:JSON.stringify({title,message_text:messageText,target_type:targetType,target_values:targetValues,active:true})
+    });
+    $("newAnnouncementTitle").value="";
+    $("newAnnouncementText").value="";
+    document.querySelectorAll("#newAnnouncementTeams input").forEach(x=>x.checked=false);
+    $("newAnnouncementTargetType").value="all";
+    updateNewAnnouncementTargetUI();
+    toast("App 公告已發布");
+    await loadAdminAnnouncements();
+  }catch(e){toast(e.message);}
+});
+
 function adminAnnouncementTarget(a){
   if(a.target_type==="all")return "全部家長";
   if(a.target_type==="team")return (a.target_values||[]).join("、")||"依組別";
@@ -548,6 +582,7 @@ async function loadAdminAnnouncements(){
   if(!$("adminAnnouncementList"))return;
 
   const rows=await api("/api/admin/announcements");
+  adminAnnouncementCache=Array.isArray(rows)?rows:[];
 
   $("adminAnnouncementList").innerHTML=(rows||[]).map(a=>{
     const text=(a.message_text||"").replace(/\s+/g," ").trim();
