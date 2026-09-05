@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="青山棒球">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20260905-2">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
@@ -64,6 +64,7 @@
         <div class="heroIcon">⚾️</div>
       </div>
       <div id="deepLinkNotice" class="card notice hidden"></div>
+      <button id="newAnnouncementHomeNotice" type="button" class="card newAnnouncementHomeNotice hidden">📢 有新公告，點這裡查看</button>
       <h3>近期活動</h3><div id="events"></div>
       <h3>待繳費</h3><div id="paymentsPreview"></div>
     </section>
@@ -178,7 +179,7 @@
     <label><input type="radio" name="status" value="leave"><span>請假</span></label>
   </div>
   <div id="practiceDurationBox" class="hidden">
-    <label>出席時段</label>
+    <label>出席時段（請選：全天／上午請假／下午請假）</label>
     <div class="segmented">
       <label><input type="radio" name="practice_duration" value="full" checked><span>全天</span></label>
       <label><input type="radio" name="practice_duration" value="morning_leave"><span>上午請假</span></label>
@@ -205,6 +206,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20260905-2"></script>
 </body>
 </html>

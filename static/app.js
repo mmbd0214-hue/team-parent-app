@@ -194,27 +194,27 @@ window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎
 
 function announcementSeenStorageKey(){
   const parentId=state.parent?.id;
-  return parentId ? `announcementLastSeen:${parentId}` : "announcementLastSeen";
+  return parentId ? `announcementLastSeenKey:${parentId}` : "announcementLastSeenKey";
 }
 
-function announcementTimestamp(a){
-  const t=Date.parse(a?.created_at||"");
-  return Number.isFinite(t) ? t : 0;
+function announcementIdentity(a){
+  if(!a)return "";
+  return `${String(a.id??"")}|${String(a.created_at??"")}`;
 }
 
-function newestAnnouncementTimestamp(rows){
-  return (rows||[]).reduce((max,a)=>Math.max(max,announcementTimestamp(a)),0);
+function newestAnnouncement(rows){
+  return Array.isArray(rows)&&rows.length ? rows[0] : null;
 }
 
 function getAnnouncementLastSeen(){
-  const raw=localStorage.getItem(announcementSeenStorageKey())||"";
-  const t=Date.parse(raw);
-  return Number.isFinite(t) ? t : 0;
+  return localStorage.getItem(announcementSeenStorageKey())||"";
 }
 
 function setAnnouncementBadge(hasNew){
   const badge=$("announcementNewBadge");
   if(badge) badge.classList.toggle("hidden",!hasNew);
+  const homeNotice=$("newAnnouncementHomeNotice");
+  if(homeNotice) homeNotice.classList.toggle("hidden",!hasNew);
 }
 
 async function checkNewAnnouncements(){
@@ -227,18 +227,20 @@ async function checkNewAnnouncements(){
         : [];
 
     announcementRowsCache=rows;
-    const newest=newestAnnouncementTimestamp(rows);
+    const newest=newestAnnouncement(rows);
+    const newestKey=announcementIdentity(newest);
     const lastSeen=getAnnouncementLastSeen();
-    setAnnouncementBadge(newest>lastSeen);
+    setAnnouncementBadge(Boolean(newestKey && newestKey!==lastSeen));
   }catch(e){
     console.warn("checkNewAnnouncements failed:",e);
   }
 }
 
 function markAnnouncementsSeen(rows){
-  const newest=newestAnnouncementTimestamp(rows);
-  if(!newest)return;
-  localStorage.setItem(announcementSeenStorageKey(),new Date(newest).toISOString());
+  const newest=newestAnnouncement(rows);
+  const key=announcementIdentity(newest);
+  if(!key)return;
+  localStorage.setItem(announcementSeenStorageKey(),key);
   setAnnouncementBadge(false);
 }
 
@@ -334,7 +336,7 @@ async function loadAnnouncements(){
 
       const title=String(a.title||"").trim() || "球隊通知";
       const message=String(a.message_text||"");
-      const isNew=announcementTimestamp(a)>announcementLastSeenBeforeOpen;
+      const isNew=announcementIdentity(a)!==announcementLastSeenBeforeOpen && announcementIdentity(a)===announcementIdentity(newestAnnouncement(rows));
 
       cards.push(`
         <div class="card announcementCard">
@@ -515,6 +517,18 @@ async function openIntegratedAdmin(forceReload=false){
 
 $("reloadAdminFrame")?.addEventListener("click",()=>openIntegratedAdmin(true));
 
+const newAnnouncementHomeNotice=$("newAnnouncementHomeNotice");
+if(newAnnouncementHomeNotice){
+  newAnnouncementHomeNotice.onclick=async()=>{
+    document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
+    $("announcementsPage").classList.remove("hidden");
+    document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
+    const nav=document.querySelector('nav button[data-page="announcementsPage"]');
+    if(nav)nav.classList.add("active");
+    await loadAnnouncements();
+  };
+}
+
 document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
   document.querySelectorAll(".page").forEach(p=>p.classList.add("hidden"));
   $(btn.dataset.page).classList.remove("hidden");
@@ -685,4 +699,4 @@ window.addEventListener("load",updateInstallUI);
 
 start();
 
-console.log("announcement structure fix v2 loaded");
+console.log("qingshan release 20260905-2 loaded");

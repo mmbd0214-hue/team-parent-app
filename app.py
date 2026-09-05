@@ -31,6 +31,16 @@ if not DATABASE_URL:
 app = FastAPI(title="球隊家長 App")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="static")
 
+@app.middleware("http")
+async def disable_frontend_cache(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path in {"/", "/admin", "/service-worker.js"} or path.endswith(".js") or path.endswith(".css"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 
 def db():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
