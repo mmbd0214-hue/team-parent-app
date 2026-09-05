@@ -233,11 +233,11 @@ async function updateIdBadge(kind, rows, badgeId, suffix=""){
     setNavBadge(badgeId,false);
     return false;
   }
-  // 第一次使用此提示功能時，將目前內容設為已讀基準，避免所有舊資料都顯示 NEW。
+  // 尚未有已讀紀錄時，代表目前內容尚未被這位家長讀取，應顯示 NEW。
+  // 只有實際進入該頁面後，才會由 mark*Seen() 寫入已讀狀態並清除 NEW。
   if(raw===undefined || raw===null){
-    try{await saveContentSeen(kind,newest,suffix);}catch(e){console.warn("save baseline failed:",e);}
-    setNavBadge(badgeId,false);
-    return false;
+    setNavBadge(badgeId,true);
+    return true;
   }
   const hasNew=newest>Number(raw||0);
   setNavBadge(badgeId,hasNew);
@@ -285,8 +285,7 @@ async function checkNewAnnouncements(){
       return;
     }
     if(raw===undefined || raw===null){
-      await saveContentSeen("announcement",newest,"");
-      setAnnouncementBadge(false);
+      setAnnouncementBadge(true);
       return;
     }
     setAnnouncementBadge(newest>Number(raw||0));
