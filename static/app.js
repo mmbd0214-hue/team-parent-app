@@ -447,8 +447,8 @@ function renderEvents(){
     let ans="尚未回覆";
     if(a){
       if(a.attendance_status==="leave") ans="請假";
-      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="morning_leave") ans="上午請假";
-      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="afternoon_leave") ans="下午請假";
+      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="morning_leave") ans="下午出席";
+      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="afternoon_leave") ans="上午出席";
       else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="half") ans="半天（舊資料）";
       else if(a.attendance_status==="attend") ans="✅ 已登記出席";
       else ans="未確定";
@@ -501,7 +501,7 @@ function toggleAttendanceOptions(){
 
   $("practiceDurationBox").classList.toggle("hidden",!(isPractice&&isFullAttend));
 
-  // 整天請假或上午/下午請假都可填寫請假原因。
+  // 整天請假或半天出席（另一時段請假）都可填寫請假原因。
   $("leaveBox").classList.toggle("hidden",!(status==="leave"||isPartialLeave));
   $("gameAttendNoteBox").classList.toggle(
     "hidden",
