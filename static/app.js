@@ -1,5 +1,5 @@
 
-let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{}},pendingCode="",currentEventType="";
+let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{}},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
 async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
@@ -79,7 +79,37 @@ $("lineLogin").onclick=async()=>{
 };
 $("mockLogin").onclick=()=>finishLogin("mock").catch(e=>toast(e.message));$("retryBinding").onclick=()=>loadApp().catch(e=>toast(e.message));
 
-async function loadApp(){const me=await api("/api/me");state.parent=me.parent;state.players=me.players;updateManagementVisibility();if(me.needs_binding||!state.players.length){$("bindingHello").textContent=`${state.parent.display_name}，登入成功`;showOnly("binding");return}state.playerId=state.playerId||state.players[0].id;$("hello").textContent=`${state.parent.display_name}，你好`;$("parentName").textContent=state.parent.display_name;$("childrenCount").textContent=`${state.players.length} 位`;$("playerSelect").innerHTML=state.players.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");$("playerSelect").value=state.playerId;$("playerSelect").onchange=async e=>{state.playerId=Number(e.target.value);await refresh()};state.events=await api("/api/events");showOnly("app");await refresh();const eventId=Number(new URLSearchParams(location.search).get("event"));if(eventId&&state.events.find(x=>Number(x.id)===eventId)){setTimeout(()=>openEvent(eventId),250)}}
+async function loadApp(){
+  const me=await api("/api/me");
+  state.parent=me.parent;
+  state.players=me.players;
+  updateManagementVisibility();
+
+  if(me.needs_binding||!state.players.length){
+    $("bindingHello").textContent=`${state.parent.display_name}，登入成功`;
+    showOnly("binding");
+    return;
+  }
+
+  state.playerId=state.playerId||state.players[0].id;
+  $("hello").textContent=`${state.parent.display_name}，你好`;
+  $("parentName").textContent=state.parent.display_name;
+  $("childrenCount").textContent=`${state.players.length} 位`;
+  $("playerSelect").innerHTML=state.players.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");
+  $("playerSelect").value=state.playerId;
+  $("playerSelect").onchange=async e=>{state.playerId=Number(e.target.value);await refresh()};
+  state.events=await api("/api/events");
+  showOnly("app");
+  await refresh();
+
+  // 登入後檢查是否有比上次查看時間更新的公告，於下方「公告」顯示 NEW。
+  await checkNewAnnouncements();
+
+  const eventId=Number(new URLSearchParams(location.search).get("event"));
+  if(eventId&&state.events.find(x=>Number(x.id)===eventId)){
+    setTimeout(()=>openEvent(eventId),250);
+  }
+}
 
 $("previewBindBtn").onclick=async()=>{const code=$("bindCodeInput").value.trim().toUpperCase();if(code.length<4)return toast("請輸入完整綁定碼");try{const d=await api("/api/bind/preview",{method:"POST",body:JSON.stringify({code})});pendingCode=code;const p=d.player;$("bindPreview").classList.remove("hidden");$("bindPreview").innerHTML=`<div class="bindResult"><div class="bindPlayer">⚾ ${p.name}</div><div>${p.team}${p.number?` / #${p.number}`:""}</div><div class="muted">目前已綁定 ${d.linked_parents}/${d.max_parents} 位家長</div>${d.already_bound?'<div class="bindOk">✅ 你已綁定此球員</div>':d.can_bind?'<button id="confirmBindBtn" class="primary">確認綁定</button>':'<div class="bindError">此球員已達家長綁定上限</div>'}</div>`;const b=$("confirmBindBtn");if(b)b.onclick=confirmBinding}catch(e){toast(e.message)}};
 async function confirmBinding(){try{const d=await api("/api/bind/confirm",{method:"POST",body:JSON.stringify({code:pendingCode})});toast(`已綁定 ${d.player.name}`);$("bindCodeInput").value="";$("bindPreview").classList.add("hidden");await loadApp()}catch(e){toast(e.message)}}
@@ -162,6 +192,56 @@ window.signupVolunteer=async id=>{const el=$("volunteerPlayer_"+id);try{await ap
 window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎？"))return;try{await api(`/api/volunteers/${id}/signup`,{method:"DELETE"});toast("已取消義工登記");await loadVolunteers()}catch(e){toast(e.message)}};
 
 
+function announcementSeenStorageKey(){
+  const parentId=state.parent?.id;
+  return parentId ? `announcementLastSeen:${parentId}` : "announcementLastSeen";
+}
+
+function announcementTimestamp(a){
+  const t=Date.parse(a?.created_at||"");
+  return Number.isFinite(t) ? t : 0;
+}
+
+function newestAnnouncementTimestamp(rows){
+  return (rows||[]).reduce((max,a)=>Math.max(max,announcementTimestamp(a)),0);
+}
+
+function getAnnouncementLastSeen(){
+  const raw=localStorage.getItem(announcementSeenStorageKey())||"";
+  const t=Date.parse(raw);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function setAnnouncementBadge(hasNew){
+  const badge=$("announcementNewBadge");
+  if(badge) badge.classList.toggle("hidden",!hasNew);
+}
+
+async function checkNewAnnouncements(){
+  try{
+    const data=await api("/api/announcements");
+    const rows=Array.isArray(data)
+      ? data
+      : Array.isArray(data?.announcements)
+        ? data.announcements
+        : [];
+
+    announcementRowsCache=rows;
+    const newest=newestAnnouncementTimestamp(rows);
+    const lastSeen=getAnnouncementLastSeen();
+    setAnnouncementBadge(newest>lastSeen);
+  }catch(e){
+    console.warn("checkNewAnnouncements failed:",e);
+  }
+}
+
+function markAnnouncementsSeen(rows){
+  const newest=newestAnnouncementTimestamp(rows);
+  if(!newest)return;
+  localStorage.setItem(announcementSeenStorageKey(),new Date(newest).toISOString());
+  setAnnouncementBadge(false);
+}
+
 function normalizeAnnouncementTargets(value){
   if(Array.isArray(value)) return value.map(String);
 
@@ -212,6 +292,7 @@ async function loadAnnouncements(){
   const box=$("announcementList");
   if(!box) return;
 
+  announcementLastSeenBeforeOpen=getAnnouncementLastSeen();
   box.innerHTML=`<div class="card muted">公告載入中...</div>`;
 
   try{
@@ -225,9 +306,11 @@ async function loadAnnouncements(){
         : [];
 
     console.log("announcements loaded:", rows);
+    announcementRowsCache=rows;
 
     if(!rows.length){
       box.innerHTML=`<div class="card muted">目前沒有公告</div>`;
+      setAnnouncementBadge(false);
       return;
     }
 
@@ -251,13 +334,14 @@ async function loadAnnouncements(){
 
       const title=String(a.title||"").trim() || "球隊通知";
       const message=String(a.message_text||"");
+      const isNew=announcementTimestamp(a)>announcementLastSeenBeforeOpen;
 
       cards.push(`
         <div class="card announcementCard">
           <div class="announcementTop">
             <div>
               <div class="announcementDate">${escapeParentHtml(dateText)}</div>
-              <h3>${escapeParentHtml(title)}</h3>
+              <h3>${escapeParentHtml(title)}${isNew?`<span class="announcementNewTag">NEW</span>`:""}</h3>
             </div>
             <span class="tag">${escapeParentHtml(announcementTargetLabel(a))}</span>
           </div>
@@ -270,6 +354,7 @@ async function loadAnnouncements(){
     }
 
     box.innerHTML=cards.join("") || `<div class="card muted">目前沒有公告</div>`;
+    markAnnouncementsSeen(rows);
 
   }catch(e){
     console.error("loadAnnouncements failed:",e);

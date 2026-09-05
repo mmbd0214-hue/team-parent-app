@@ -56,6 +56,41 @@ textarea{width:100%;border:1px solid #dce1dc;border-radius:12px;padding:10px}.me
   font-weight:700;
 }
 
+
+.navIconWithBadge{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.navNewBadge{
+  position:absolute;
+  top:-8px;
+  right:-17px;
+  min-width:25px;
+  height:15px;
+  padding:0 4px;
+  border-radius:999px;
+  background:#d93025;
+  color:#fff;
+  font-size:8px;
+  font-weight:800;
+  line-height:15px;
+  text-align:center;
+  box-shadow:0 1px 4px rgba(0,0,0,.18);
+}
+.announcementNewTag{
+  display:inline-block;
+  margin-left:6px;
+  padding:2px 6px;
+  border-radius:999px;
+  background:#d93025;
+  color:#fff;
+  font-size:10px;
+  font-weight:800;
+  vertical-align:middle;
+}
+
 .announcementCard h3{margin:4px 0 0;font-size:18px}
 .announcementTop{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .announcementDate{font-size:12px;color:var(--muted)}
