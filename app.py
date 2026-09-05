@@ -1490,7 +1490,7 @@ def admin_events(authorization: str | None = Header(default=None)):
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,e.status,e.event_type,
+                SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,e.meal_enabled,e.status,e.event_type,
                        e.response_deadline::text,e.meet_time,e.meet_time_tbd,
                        COUNT(ep.player_id) invited,COUNT(a.id) replied,
                        COALESCE(SUM(CASE WHEN a.attendance_status='attend' THEN 1 ELSE 0 END),0) attend,
@@ -1516,9 +1516,9 @@ def create_event(body: EventIn, authorization: str | None = Header(default=None)
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO events(title,event_date,location,meal_price,event_type,response_deadline,meet_time,meet_time_tbd)
+                INSERT INTO events(title,event_date,location,meal_enabled,meal_price,event_type,response_deadline,meet_time,meet_time_tbd)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
-            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,body.response_deadline or None,
+            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_enabled,body.meal_price,body.event_type,body.response_deadline or None,
                   None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd))
             event=cur.fetchone()
             if body.player_ids:
@@ -1536,9 +1536,9 @@ def update_event(event_id: int, body: EventUpdateIn, authorization: str | None =
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE events SET title=%s,event_date=%s,location=%s,meal_price=%s,event_type=%s,response_deadline=%s,status=%s,meet_time=%s,meet_time_tbd=%s
+                UPDATE events SET title=%s,event_date=%s,location=%s,meal_enabled=%s,meal_price=%s,event_type=%s,response_deadline=%s,status=%s,meet_time=%s,meet_time_tbd=%s
                 WHERE id=%s RETURNING *
-            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_price,body.event_type,body.response_deadline or None,body.status,
+            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_enabled,body.meal_price,body.event_type,body.response_deadline or None,body.status,
                   None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd,event_id))
             event=cur.fetchone()
             if not event: raise HTTPException(404,"找不到活動")
@@ -1558,7 +1558,7 @@ def admin_event_detail(event_id: int, authorization: str | None = Header(default
     require_admin(authorization)
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,title,event_date::text,location,meal_price,status,event_type,response_deadline::text,meet_time,meet_time_tbd FROM events WHERE id=%s",(event_id,))
+            cur.execute("SELECT id,title,event_date::text,location,meal_enabled,meal_price,status,event_type,response_deadline::text,meet_time,meet_time_tbd FROM events WHERE id=%s",(event_id,))
             event=cur.fetchone()
             if not event: raise HTTPException(404,"找不到活動")
             event["meet_time"]=normalize_time_value(event.get("meet_time"))
