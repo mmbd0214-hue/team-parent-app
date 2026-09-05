@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="青山棒球">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/style.css?v=20260905-5">
+  <link rel="stylesheet" href="/static/style.css?v=20260905-6">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
@@ -65,7 +65,7 @@
       </div>
       <div id="deepLinkNotice" class="card notice hidden"></div>
       <button id="newAnnouncementHomeNotice" type="button" class="card newAnnouncementHomeNotice hidden">📢 有新公告，點這裡查看</button>
-      <h3>近期活動</h3><div id="events"></div>
+      <div class="managementHeader"><h3>近期活動</h3><button id="refreshHomeBtn" class="secondary compactBtn">重新整理</button></div><div id="events"></div>
       <h3>待繳費</h3><div id="paymentsPreview"></div>
     </section>
 
@@ -118,7 +118,7 @@
     </section>
 
 <section id="paymentsPage" class="page hidden">
-      <h2>繳費紀錄</h2><p class="muted">查看目前應繳與已繳項目。</p><div id="payments"></div>
+      <div class="managementHeader"><h2>繳費紀錄</h2><button id="refreshPaymentsBtn" class="secondary compactBtn">重新整理</button></div><p class="muted">查看目前應繳與已繳項目。</p><div id="payments"></div>
     </section>
 
     <section id="profilePage" class="page hidden">
@@ -209,6 +209,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=20260905-5"></script>
+<script src="/static/app.js?v=20260905-6"></script>
 </body>
 </html>

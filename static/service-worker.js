@@ -1,5 +1,5 @@
 
-const CACHE_NAME = "qingshan-team-app-13";
+const CACHE_NAME = "qingshan-team-app-14";
 const APP_SHELL = [
   "/",
   "/static/style.css",

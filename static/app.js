@@ -439,6 +439,38 @@ async function loadAnnouncements(){
   }
 }
 
+const refreshHomeBtn=$("refreshHomeBtn");
+if(refreshHomeBtn){
+  refreshHomeBtn.onclick=async()=>{
+    refreshHomeBtn.disabled=true;
+    try{
+      await refresh();
+      await markEventsSeen();
+      toast("首頁已重新整理");
+    }catch(e){
+      toast(e.message||"重新整理失敗");
+    }finally{
+      refreshHomeBtn.disabled=false;
+    }
+  };
+}
+
+const refreshPaymentsBtn=$("refreshPaymentsBtn");
+if(refreshPaymentsBtn){
+  refreshPaymentsBtn.onclick=async()=>{
+    refreshPaymentsBtn.disabled=true;
+    try{
+      await refresh();
+      await markPaymentsSeen();
+      toast("繳費資料已重新整理");
+    }catch(e){
+      toast(e.message||"重新整理失敗");
+    }finally{
+      refreshPaymentsBtn.disabled=false;
+    }
+  };
+}
+
 const refreshAnnouncementsBtn=$("refreshAnnouncementsBtn");
 if(refreshAnnouncementsBtn){
   refreshAnnouncementsBtn.onclick=async()=>{
