@@ -1,5 +1,5 @@
 
-let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{}},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
+let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{},payments:[]},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
 async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
@@ -192,27 +192,59 @@ window.signupVolunteer=async id=>{const el=$("volunteerPlayer_"+id);try{await ap
 window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎？"))return;try{await api(`/api/volunteers/${id}/signup`,{method:"DELETE"});toast("已取消義工登記");await loadVolunteers()}catch(e){toast(e.message)}};
 
 
-function announcementSeenStorageKey(){
-  const parentId=state.parent?.id;
-  return parentId ? `announcementLastSeenKey:${parentId}` : "announcementLastSeenKey";
+function contentSeenKey(kind, suffix=""){
+  const parentId=state.parent?.id || "guest";
+  return `contentLastSeen:${kind}:${parentId}${suffix?":"+suffix:""}`;
+}
+
+function maxNumericId(rows){
+  return (Array.isArray(rows)?rows:[]).reduce((m,x)=>Math.max(m,Number(x?.id)||0),0);
+}
+
+function setNavBadge(id,hasNew){
+  const badge=$(id);
+  if(badge) badge.classList.toggle("hidden",!hasNew);
+}
+
+function updateIdBadge(kind, rows, badgeId, suffix=""){
+  const newest=maxNumericId(rows);
+  const key=contentSeenKey(kind,suffix);
+  const raw=localStorage.getItem(key);
+  if(!newest){
+    setNavBadge(badgeId,false);
+    return false;
+  }
+  // 第一次啟用 NEW 功能時，以目前資料建立基準，不把既有舊資料誤判為新資料。
+  if(raw===null){
+    localStorage.setItem(key,String(newest));
+    setNavBadge(badgeId,false);
+    return false;
+  }
+  const hasNew=newest>Number(raw||0);
+  setNavBadge(badgeId,hasNew);
+  return hasNew;
+}
+
+function markIdRowsSeen(kind, rows, badgeId, suffix=""){
+  const newest=maxNumericId(rows);
+  if(newest) localStorage.setItem(contentSeenKey(kind,suffix),String(newest));
+  setNavBadge(badgeId,false);
 }
 
 function announcementIdentity(a){
-  if(!a)return "";
-  return `${String(a.id??"")}|${String(a.created_at??"")}`;
+  return a ? String(Number(a.id)||a.id||"") : "";
 }
 
 function newestAnnouncement(rows){
-  return Array.isArray(rows)&&rows.length ? rows[0] : null;
+  return Array.isArray(rows)&&rows.length ? rows.reduce((best,a)=>(Number(a?.id)||0)>(Number(best?.id)||0)?a:best,rows[0]) : null;
 }
 
 function getAnnouncementLastSeen(){
-  return localStorage.getItem(announcementSeenStorageKey())||"";
+  return localStorage.getItem(contentSeenKey("announcement"))||"";
 }
 
 function setAnnouncementBadge(hasNew){
-  const badge=$("announcementNewBadge");
-  if(badge) badge.classList.toggle("hidden",!hasNew);
+  setNavBadge("announcementNewBadge",hasNew);
   const homeNotice=$("newAnnouncementHomeNotice");
   if(homeNotice) homeNotice.classList.toggle("hidden",!hasNew);
 }
@@ -220,28 +252,44 @@ function setAnnouncementBadge(hasNew){
 async function checkNewAnnouncements(){
   try{
     const data=await api("/api/announcements");
-    const rows=Array.isArray(data)
-      ? data
-      : Array.isArray(data?.announcements)
-        ? data.announcements
-        : [];
-
+    const rows=Array.isArray(data)?data:(Array.isArray(data?.announcements)?data.announcements:[]);
     announcementRowsCache=rows;
-    const newest=newestAnnouncement(rows);
-    const newestKey=announcementIdentity(newest);
-    const lastSeen=getAnnouncementLastSeen();
-    setAnnouncementBadge(Boolean(newestKey && newestKey!==lastSeen));
+    const newest=maxNumericId(rows);
+    const key=contentSeenKey("announcement");
+    const raw=localStorage.getItem(key);
+    if(!newest){
+      // 沒有公告時同步清掉提示；避免舊 NEW 殘留。
+      setAnnouncementBadge(false);
+      return;
+    }
+    if(raw===null){
+      localStorage.setItem(key,String(newest));
+      setAnnouncementBadge(false);
+      return;
+    }
+    setAnnouncementBadge(newest>Number(raw||0));
   }catch(e){
     console.warn("checkNewAnnouncements failed:",e);
   }
 }
 
 function markAnnouncementsSeen(rows){
-  const newest=newestAnnouncement(rows);
-  const key=announcementIdentity(newest);
-  if(!key)return;
-  localStorage.setItem(announcementSeenStorageKey(),key);
+  const newest=maxNumericId(rows);
+  if(newest) localStorage.setItem(contentSeenKey("announcement"),String(newest));
   setAnnouncementBadge(false);
+}
+
+function checkNewEvents(){
+  updateIdBadge("event",state.events,"homeNewBadge");
+}
+function markEventsSeen(){
+  markIdRowsSeen("event",state.events,"homeNewBadge");
+}
+function checkNewPayments(){
+  updateIdBadge("payment",state.payments,"paymentNewBadge",String(state.playerId||""));
+}
+function markPaymentsSeen(){
+  markIdRowsSeen("payment",state.payments,"paymentNewBadge",String(state.playerId||""));
 }
 
 function normalizeAnnouncementTargets(value){
@@ -370,7 +418,7 @@ async function loadAnnouncements(){
   }
 }
 
-async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));const payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(payments)}
+async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);checkNewEvents();checkNewPayments()}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
     const a=state.attendance[ev.id];
@@ -534,6 +582,9 @@ document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
   $(btn.dataset.page).classList.remove("hidden");
   document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
   btn.classList.add("active");
+
+  if(btn.dataset.page==="homePage") markEventsSeen();
+  if(btn.dataset.page==="paymentsPage") markPaymentsSeen();
 
   if(btn.dataset.page==="announcementsPage"){
     try{
