@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-title" content="青山棒球">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/style.css?v=20260905-3">
+  <link rel="stylesheet" href="/static/style.css?v=20260905-4">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
@@ -91,7 +91,10 @@
 
     
     <section id="announcementsPage" class="page hidden">
-      <h2>球隊公告</h2>
+      <div class="managementHeader">
+        <h2>球隊公告</h2>
+        <button id="refreshAnnouncementsBtn" class="secondary compactBtn">重新整理</button>
+      </div>
       <p class="muted">這裡會保留球隊過去發送的重要通知。</p>
       <div id="announcementList"></div>
     </section>
@@ -206,6 +209,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=20260905-3"></script>
+<script src="/static/app.js?v=20260905-4"></script>
 </body>
 </html>

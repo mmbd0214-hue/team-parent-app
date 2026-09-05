@@ -1,7 +1,7 @@
 
 let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{},payments:[],contentSeen:{}},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
-async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
+async function api(path,options={}){if(!options.method||String(options.method).toUpperCase()==="GET")options.cache="no-store";options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
 function showOnly(id){["loading","login","friendship","binding","app"].forEach(x=>$(x).classList.toggle("hidden",x!==id))}
 async function finishLogin(accessToken){const r=await api("/api/auth/line",{method:"POST",body:JSON.stringify({access_token:accessToken})});token=r.token;localStorage.setItem("teamToken",token);await loadApp()}
@@ -438,6 +438,19 @@ async function loadAnnouncements(){
         </div>
       </div>`;
   }
+}
+
+const refreshAnnouncementsBtn=$("refreshAnnouncementsBtn");
+if(refreshAnnouncementsBtn){
+  refreshAnnouncementsBtn.onclick=async()=>{
+    refreshAnnouncementsBtn.disabled=true;
+    try{
+      await loadAnnouncements();
+      toast("公告已重新整理");
+    }finally{
+      refreshAnnouncementsBtn.disabled=false;
+    }
+  };
 }
 
 async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);await checkNewEvents();await checkNewPayments()}

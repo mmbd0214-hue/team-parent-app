@@ -282,7 +282,8 @@ def init_db():
                         MAX(message_text) AS message_text,
                         ARRAY_REMOVE(ARRAY_AGG(DISTINCT parent_id), NULL) AS parent_ids
                     FROM message_logs
-                    WHERE NOT (
+                    WHERE FALSE  -- 歷史訊息已停止自動回填；公告管理為 App 公告唯一來源
+                      AND NOT (
                         target_type='parent'
                         AND target_label='單一家長'
                     )
@@ -557,11 +558,15 @@ def set_content_seen(body: ContentSeenIn, authorization: str | None = Header(def
 def parent_announcements(
     authorization: str | None = Header(default=None)
 ):
+    """Return only active rows from announcements.
+
+    App 公告以 announcements 為唯一資料來源，避免後台刪除後又從
+    message_logs 歷史紀錄重新出現。
+    """
     parent = current_parent(authorization)
 
     with db() as conn:
         with conn.cursor() as cur:
-            # 目前家長所綁定球員的組別
             cur.execute("""
                 SELECT DISTINCT p.team
                 FROM parent_players pp
@@ -571,224 +576,44 @@ def parent_announcements(
             """, (parent["id"],))
             teams = {r["team"] for r in cur.fetchall()}
 
-            result = []
-            seen = set()
-
-            # -------------------------------------------------
-            # A. 正式 announcements
-            # -------------------------------------------------
             cur.execute("""
-                SELECT
-                    a.id,
-                    a.title,
-                    a.message_text,
-                    a.target_type,
-                    a.target_values,
-                    a.created_at
-                FROM announcements a
-                WHERE a.active=TRUE
-                ORDER BY a.created_at DESC,a.id DESC
+                SELECT id,title,message_text,target_type,target_values,created_at
+                FROM announcements
+                WHERE active=TRUE
+                ORDER BY created_at DESC,id DESC
                 LIMIT 300
             """)
             rows = cur.fetchall()
 
-            for row in rows:
-                target_type = row["target_type"]
-                target_values = row["target_values"] or []
-
-                visible = False
-
-                if target_type == "all":
-                    visible = True
-
-                elif target_type == "team":
-                    visible = any(team in teams for team in target_values)
-
-                elif target_type == "parent":
-                    visible = str(parent["id"]) in [str(x) for x in target_values]
-
-                if not visible:
-                    continue
-
-                key = (
-                    row["message_text"],
-                    target_type,
-                    row["created_at"].date() if row["created_at"] else None,
-                )
-
-                seen.add(key)
-                result.append({
-                    "id": f"a-{row['id']}",
-                    "title": row["title"],
-                    "message_text": row["message_text"],
-                    "target_type": target_type,
-                    "target_values": target_values,
-                    "created_at": row["created_at"],
-                    "source": "announcement",
-                })
-
-            # -------------------------------------------------
-            # B. 歷史 message_logs
-            # 直接即時合併，不再依賴 startup backfill。
-            # -------------------------------------------------
-
-            # B1. 全部 / 組別群發
-            cur.execute("""
-                WITH grouped AS (
-                    SELECT
-                        CASE
-                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
-                                THEN 'batch:' || batch_id
-                            ELSE
-                                'legacy:' ||
-                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
-                                ':' || COALESCE(target_type,'') ||
-                                ':' || COALESCE(target_label,'') ||
-                                ':' || MD5(COALESCE(message_text,''))
-                        END AS group_id,
-                        MIN(sent_at) AS sent_at,
-                        MAX(target_type) AS target_type,
-                        MAX(target_label) AS target_label,
-                        MAX(message_text) AS message_text
-                    FROM message_logs
-                    WHERE target_type IN ('all','team')
-                    GROUP BY
-                        CASE
-                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
-                                THEN 'batch:' || batch_id
-                            ELSE
-                                'legacy:' ||
-                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
-                                ':' || COALESCE(target_type,'') ||
-                                ':' || COALESCE(target_label,'') ||
-                                ':' || MD5(COALESCE(message_text,''))
-                        END
-                )
-                SELECT *
-                FROM grouped
-                ORDER BY sent_at DESC
-                LIMIT 300
-            """)
-            logs = cur.fetchall()
-
-            allowed_teams = {"U10", "U12", "U13", "U15"}
-
-            for row in logs:
-                target_type = row["target_type"]
+    result = []
+    for row in rows:
+        target_type = row["target_type"]
+        target_values = row["target_values"] or []
+        if isinstance(target_values, str):
+            try:
+                target_values = json.loads(target_values)
+            except Exception:
                 target_values = []
 
-                if target_type == "all":
-                    visible = True
+        visible = (
+            target_type == "all"
+            or (target_type == "team" and any(team in teams for team in target_values))
+            or (target_type == "parent" and str(parent["id"]) in [str(x) for x in target_values])
+        )
+        if not visible:
+            continue
 
-                else:
-                    label = row["target_label"] or ""
-                    normalized = (
-                        label.replace(",", "、")
-                             .replace("，", "、")
-                             .replace("/", "、")
-                             .replace(" ", "、")
-                    )
-                    target_values = [
-                        x for x in normalized.split("、")
-                        if x in allowed_teams
-                    ]
+        result.append({
+            "id": row["id"],
+            "title": row["title"],
+            "message_text": row["message_text"],
+            "target_type": target_type,
+            "target_values": target_values,
+            "created_at": row["created_at"],
+            "source": "announcement",
+        })
 
-                    # 某些舊紀錄 target_label 可能格式不固定，
-                    # 再直接從字串搜尋 U10/U12/U13/U15。
-                    if not target_values:
-                        target_values = [
-                            t for t in allowed_teams
-                            if t in label
-                        ]
-
-                    visible = any(team in teams for team in target_values)
-
-                if not visible:
-                    continue
-
-                key = (
-                    row["message_text"],
-                    target_type,
-                    row["sent_at"].date() if row["sent_at"] else None,
-                )
-
-                if key in seen:
-                    continue
-
-                seen.add(key)
-                result.append({
-                    "id": row["group_id"],
-                    "title": "",
-                    "message_text": row["message_text"],
-                    "target_type": target_type,
-                    "target_values": target_values,
-                    "created_at": row["sent_at"],
-                    "source": "message_log",
-                })
-
-            # B2. 指定家長歷史訊息
-            # 只撈這個 parent_id 曾實際收到的群發。
-            cur.execute("""
-                WITH grouped AS (
-                    SELECT
-                        CASE
-                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
-                                THEN 'batch:' || batch_id
-                            ELSE
-                                'legacy-parent:' ||
-                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
-                                ':' || MD5(COALESCE(message_text,''))
-                        END AS group_id,
-                        MIN(sent_at) AS sent_at,
-                        MAX(message_text) AS message_text
-                    FROM message_logs
-                    WHERE parent_id=%s
-                      AND target_type='parent'
-                      AND COALESCE(target_label,'') <> '單一家長'
-                    GROUP BY
-                        CASE
-                            WHEN batch_id IS NOT NULL AND BTRIM(batch_id) <> ''
-                                THEN 'batch:' || batch_id
-                            ELSE
-                                'legacy-parent:' ||
-                                TO_CHAR(sent_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') ||
-                                ':' || MD5(COALESCE(message_text,''))
-                        END
-                )
-                SELECT *
-                FROM grouped
-                ORDER BY sent_at DESC
-                LIMIT 200
-            """, (parent["id"],))
-            parent_logs = cur.fetchall()
-
-            for row in parent_logs:
-                key = (
-                    row["message_text"],
-                    "parent",
-                    row["sent_at"].date() if row["sent_at"] else None,
-                )
-
-                if key in seen:
-                    continue
-
-                seen.add(key)
-                result.append({
-                    "id": row["group_id"],
-                    "title": "",
-                    "message_text": row["message_text"],
-                    "target_type": "parent",
-                    "target_values": [str(parent["id"])],
-                    "created_at": row["sent_at"],
-                    "source": "message_log",
-                })
-
-            result.sort(
-                key=lambda x: x["created_at"],
-                reverse=True
-            )
-
-            return result[:300]
+    return result
 
 
 # ---------------- Parent self binding ----------------
