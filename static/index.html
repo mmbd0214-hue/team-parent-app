@@ -176,8 +176,14 @@
   <div class="segmented">
     <label><input type="radio" name="status" value="attend" checked><span>✅ 出席</span></label>
     <label><input type="radio" name="status" value="leave"><span>請假</span></label>
-    <label id="morningLeaveOption"><input type="radio" name="status" value="morning_leave"><span>上午請假</span></label>
-    <label id="afternoonLeaveOption"><input type="radio" name="status" value="afternoon_leave"><span>下午請假</span></label>
+  </div>
+  <div id="practiceDurationBox" class="hidden">
+    <label>出席時段</label>
+    <div class="segmented">
+      <label><input type="radio" name="practice_duration" value="full" checked><span>全天</span></label>
+      <label><input type="radio" name="practice_duration" value="morning_leave"><span>上午請假</span></label>
+      <label><input type="radio" name="practice_duration" value="afternoon_leave"><span>下午請假</span></label>
+    </div>
   </div>
   <div id="gameAttendNoteBox" class="hidden">
     <label for="attendanceNote">出席備註</label>
