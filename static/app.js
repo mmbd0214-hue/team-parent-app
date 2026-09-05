@@ -1,5 +1,5 @@
 
-let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{},payments:[]},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
+let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{},payments:[],contentSeen:{}},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
 async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
@@ -83,6 +83,7 @@ async function loadApp(){
   const me=await api("/api/me");
   state.parent=me.parent;
   state.players=me.players;
+  await loadContentSeen();
   updateManagementVisibility();
 
   if(me.needs_binding||!state.players.length){
@@ -193,8 +194,7 @@ window.cancelVolunteer=async id=>{if(!confirm("確定取消這個義工登記嗎
 
 
 function contentSeenKey(kind, suffix=""){
-  const parentId=state.parent?.id || "guest";
-  return `contentLastSeen:${kind}:${parentId}${suffix?":"+suffix:""}`;
+  return `${kind}:${suffix||""}`;
 }
 
 function maxNumericId(rows){
@@ -206,17 +206,36 @@ function setNavBadge(id,hasNew){
   if(badge) badge.classList.toggle("hidden",!hasNew);
 }
 
-function updateIdBadge(kind, rows, badgeId, suffix=""){
+async function loadContentSeen(){
+  try{
+    state.contentSeen=await api("/api/content-seen")||{};
+  }catch(e){
+    console.warn("loadContentSeen failed:",e);
+    state.contentSeen={};
+  }
+}
+
+async function saveContentSeen(kind,lastSeenId,suffix=""){
+  const scope=String(suffix||"");
+  const id=Math.max(0,Number(lastSeenId)||0);
+  await api("/api/content-seen",{
+    method:"POST",
+    body:JSON.stringify({kind,scope,last_seen_id:id})
+  });
+  state.contentSeen[contentSeenKey(kind,scope)]=id;
+}
+
+async function updateIdBadge(kind, rows, badgeId, suffix=""){
   const newest=maxNumericId(rows);
-  const key=contentSeenKey(kind,suffix);
-  const raw=localStorage.getItem(key);
+  const key=contentSeenKey(kind,String(suffix||""));
+  const raw=state.contentSeen[key];
   if(!newest){
     setNavBadge(badgeId,false);
     return false;
   }
-  // 第一次啟用 NEW 功能時，以目前資料建立基準，不把既有舊資料誤判為新資料。
-  if(raw===null){
-    localStorage.setItem(key,String(newest));
+  // 第一次使用此提示功能時，將目前內容設為已讀基準，避免所有舊資料都顯示 NEW。
+  if(raw===undefined || raw===null){
+    try{await saveContentSeen(kind,newest,suffix);}catch(e){console.warn("save baseline failed:",e);}
     setNavBadge(badgeId,false);
     return false;
   }
@@ -225,9 +244,13 @@ function updateIdBadge(kind, rows, badgeId, suffix=""){
   return hasNew;
 }
 
-function markIdRowsSeen(kind, rows, badgeId, suffix=""){
+async function markIdRowsSeen(kind, rows, badgeId, suffix=""){
   const newest=maxNumericId(rows);
-  if(newest) localStorage.setItem(contentSeenKey(kind,suffix),String(newest));
+  try{
+    await saveContentSeen(kind,newest,suffix);
+  }catch(e){
+    console.warn("mark content seen failed:",e);
+  }
   setNavBadge(badgeId,false);
 }
 
@@ -240,7 +263,7 @@ function newestAnnouncement(rows){
 }
 
 function getAnnouncementLastSeen(){
-  return localStorage.getItem(contentSeenKey("announcement"))||"";
+  return String(state.contentSeen[contentSeenKey("announcement","")]||"");
 }
 
 function setAnnouncementBadge(hasNew){
@@ -255,15 +278,14 @@ async function checkNewAnnouncements(){
     const rows=Array.isArray(data)?data:(Array.isArray(data?.announcements)?data.announcements:[]);
     announcementRowsCache=rows;
     const newest=maxNumericId(rows);
-    const key=contentSeenKey("announcement");
-    const raw=localStorage.getItem(key);
+    const key=contentSeenKey("announcement","");
+    const raw=state.contentSeen[key];
     if(!newest){
-      // 沒有公告時同步清掉提示；避免舊 NEW 殘留。
       setAnnouncementBadge(false);
       return;
     }
-    if(raw===null){
-      localStorage.setItem(key,String(newest));
+    if(raw===undefined || raw===null){
+      await saveContentSeen("announcement",newest,"");
       setAnnouncementBadge(false);
       return;
     }
@@ -273,23 +295,23 @@ async function checkNewAnnouncements(){
   }
 }
 
-function markAnnouncementsSeen(rows){
+async function markAnnouncementsSeen(rows){
   const newest=maxNumericId(rows);
-  if(newest) localStorage.setItem(contentSeenKey("announcement"),String(newest));
+  try{await saveContentSeen("announcement",newest,"");}catch(e){console.warn("mark announcement seen failed:",e);}
   setAnnouncementBadge(false);
 }
 
-function checkNewEvents(){
-  updateIdBadge("event",state.events,"homeNewBadge");
+async function checkNewEvents(){
+  await updateIdBadge("event",state.events,"homeNewBadge");
 }
-function markEventsSeen(){
-  markIdRowsSeen("event",state.events,"homeNewBadge");
+async function markEventsSeen(){
+  await markIdRowsSeen("event",state.events,"homeNewBadge");
 }
-function checkNewPayments(){
-  updateIdBadge("payment",state.payments,"paymentNewBadge",String(state.playerId||""));
+async function checkNewPayments(){
+  await updateIdBadge("payment",state.payments,"paymentNewBadge",String(state.playerId||""));
 }
-function markPaymentsSeen(){
-  markIdRowsSeen("payment",state.payments,"paymentNewBadge",String(state.playerId||""));
+async function markPaymentsSeen(){
+  await markIdRowsSeen("payment",state.payments,"paymentNewBadge",String(state.playerId||""));
 }
 
 function normalizeAnnouncementTargets(value){
@@ -384,7 +406,7 @@ async function loadAnnouncements(){
 
       const title=String(a.title||"").trim() || "球隊通知";
       const message=String(a.message_text||"");
-      const isNew=announcementIdentity(a)!==announcementLastSeenBeforeOpen && announcementIdentity(a)===announcementIdentity(newestAnnouncement(rows));
+      const isNew=(Number(a.id)||0)>Number(announcementLastSeenBeforeOpen||0);
 
       cards.push(`
         <div class="card announcementCard">
@@ -404,7 +426,7 @@ async function loadAnnouncements(){
     }
 
     box.innerHTML=cards.join("") || `<div class="card muted">目前沒有公告</div>`;
-    markAnnouncementsSeen(rows);
+    await markAnnouncementsSeen(rows);
 
   }catch(e){
     console.error("loadAnnouncements failed:",e);
@@ -418,7 +440,7 @@ async function loadAnnouncements(){
   }
 }
 
-async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);checkNewEvents();checkNewPayments()}
+async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);await checkNewEvents();await checkNewPayments()}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
     const a=state.attendance[ev.id];
@@ -583,8 +605,8 @@ document.querySelectorAll("nav button").forEach(btn=>btn.onclick=async()=>{
   document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));
   btn.classList.add("active");
 
-  if(btn.dataset.page==="homePage") markEventsSeen();
-  if(btn.dataset.page==="paymentsPage") markPaymentsSeen();
+  if(btn.dataset.page==="homePage") await markEventsSeen();
+  if(btn.dataset.page==="paymentsPage") await markPaymentsSeen();
 
   if(btn.dataset.page==="announcementsPage"){
     try{

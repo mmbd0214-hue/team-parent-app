@@ -103,6 +103,15 @@ def init_db():
                 status TEXT NOT NULL DEFAULT 'unpaid',
                 note TEXT DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS parent_content_seen (
+                parent_id BIGINT NOT NULL REFERENCES parents(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                scope TEXT NOT NULL DEFAULT '',
+                last_seen_id BIGINT NOT NULL DEFAULT 0,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY(parent_id, kind, scope)
+            );
             """)
 
             cur.execute("ALTER TABLE parents ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE")
@@ -420,6 +429,12 @@ def config():
 
 # ---------------- Parent LINE / LIFF auth ----------------
 
+class ContentSeenIn(BaseModel):
+    kind: str
+    scope: str = ""
+    last_seen_id: int = 0
+
+
 class LineAuth(BaseModel):
     access_token: str | None = None
 
@@ -499,6 +514,43 @@ def current_parent(authorization):
 
     return row
 
+
+
+@app.get("/api/content-seen")
+def get_content_seen(authorization: str | None = Header(default=None)):
+    parent = current_parent(authorization)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT kind,scope,last_seen_id FROM parent_content_seen WHERE parent_id=%s",
+                (parent["id"],),
+            )
+            rows = cur.fetchall()
+    return {f"{r['kind']}:{r['scope']}": int(r['last_seen_id'] or 0) for r in rows}
+
+
+@app.post("/api/content-seen")
+def set_content_seen(body: ContentSeenIn, authorization: str | None = Header(default=None)):
+    parent = current_parent(authorization)
+    kind = (body.kind or "").strip()
+    scope = (body.scope or "").strip()
+    if kind not in {"event", "announcement", "payment"}:
+        raise HTTPException(400, "kind 錯誤")
+    last_seen_id = max(0, int(body.last_seen_id or 0))
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO parent_content_seen(parent_id,kind,scope,last_seen_id,updated_at)
+                VALUES(%s,%s,%s,%s,NOW())
+                ON CONFLICT(parent_id,kind,scope) DO UPDATE SET
+                    last_seen_id=GREATEST(parent_content_seen.last_seen_id,EXCLUDED.last_seen_id),
+                    updated_at=NOW()
+                """,
+                (parent["id"], kind, scope, last_seen_id),
+            )
+        conn.commit()
+    return {"ok": True, "last_seen_id": last_seen_id}
 
 
 @app.get("/api/announcements")
