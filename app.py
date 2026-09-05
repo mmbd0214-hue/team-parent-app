@@ -928,7 +928,8 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
     if body.player_meals < 0 or body.parent_meals < 0:
         raise HTTPException(400, "餐點數量不可為負數")
 
-    if body.practice_duration not in ("full", "half"):
+    if body.practice_duration not in ("full", "morning_leave", "afternoon_leave", "half"):
+        # "half" is kept only for compatibility with existing records.
         raise HTTPException(400, "practice_duration 錯誤")
 
     with db() as conn:
@@ -1553,6 +1554,7 @@ def admin_event_detail(event_id: int, authorization: str | None = Header(default
             event["meet_time"]=normalize_time_value(event.get("meet_time"))
             cur.execute("""
                 SELECT p.id,p.name,p.team,p.number,a.attendance_status,a.leave_reason,
+                       a.practice_duration,a.attendance_note,
                        COALESCE(a.player_meals,0) player_meals,COALESCE(a.parent_meals,0) parent_meals
                 FROM event_players ep JOIN players p ON p.id=ep.player_id
                 LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id

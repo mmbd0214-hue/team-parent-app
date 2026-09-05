@@ -286,7 +286,16 @@ async function loadAnnouncements(){
 async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));const payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(payments)}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
-    const a=state.attendance[ev.id],ans=a?(a.attendance_status==="attend"?"✅ 已登記出席":a.attendance_status==="leave"?"請假":"未確定"):"尚未回覆";
+    const a=state.attendance[ev.id];
+    let ans="尚未回覆";
+    if(a){
+      if(a.attendance_status==="leave") ans="請假";
+      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="morning_leave") ans="上午請假";
+      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="afternoon_leave") ans="下午請假";
+      else if(a.attendance_status==="attend" && ev.event_type==="practice" && a.practice_duration==="half") ans="半天（舊資料）";
+      else if(a.attendance_status==="attend") ans="✅ 已登記出席";
+      else ans="未確定";
+    }
     const meet=ev.meet_time_tbd?"未定":(ev.meet_time||"未定");
     const matches=(ev.matches||[]).map((m,i)=>`<div class="matchLine"><strong>第${i+1}場</strong>　${m.game_time_tbd?"未定":(m.game_time||"未定")}　🆚 ${m.opponent||"未定"}</div>`).join("");
     return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}${ev.meal_enabled===false?"":`<div class="meta">🍱 ${money(ev.meal_price)}/份</div>`}<button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button></div>`
@@ -303,16 +312,17 @@ window.openEvent=id=>{
   $("eventId").value=id;
   $("dialogEventTitle").textContent=ev.title;
 
-  const s=a?.attendance_status||"attend";
+  let s=a?.attendance_status||"attend";
+  if(currentEventType==="practice" && a?.attendance_status==="attend"){
+    if(a.practice_duration==="morning_leave") s="morning_leave";
+    else if(a.practice_duration==="afternoon_leave") s="afternoon_leave";
+  }
   const r=document.querySelector(`input[name=status][value=${s}]`);
-  if(r)r.checked=true;
+  (r||document.querySelector('input[name=status][value="attend"]')).checked=true;
 
   $("leaveReason").value=a?.leave_reason||"";
   $("attendanceNote").value=a?.attendance_note||"";
 
-  const duration=a?.practice_duration||"full";
-  const dr=document.querySelector(`input[name=practiceDuration][value=${duration}]`);
-  if(dr)dr.checked=true;
 
   $("mealSection").classList.toggle("hidden",ev.meal_enabled===false);
   $("playerMeals").value=ev.meal_enabled===false?0:(a?.player_meals??1);
@@ -323,28 +333,34 @@ window.openEvent=id=>{
 };
 function toggleAttendanceOptions(){
   const status=document.querySelector("input[name=status]:checked").value;
-  const isAttend=status==="attend";
+  const isFullAttend=status==="attend";
+  const isPartialLeave=status==="morning_leave"||status==="afternoon_leave";
+  const isPractice=currentEventType==="practice";
 
-  $("leaveBox").classList.toggle("hidden",isAttend);
-  $("practiceAttendBox").classList.toggle(
-    "hidden",
-    !(isAttend && currentEventType==="practice")
-  );
+  $("morningLeaveOption").classList.toggle("hidden",!isPractice);
+  $("afternoonLeaveOption").classList.toggle("hidden",!isPractice);
+
+  // 上午/下午請假仍可填寫請假原因。
+  $("leaveBox").classList.toggle("hidden",!(status==="leave"||isPartialLeave));
   $("gameAttendNoteBox").classList.toggle(
     "hidden",
-    !(isAttend && currentEventType==="game")
+    !(isFullAttend && currentEventType==="game")
   );
 }
 document.querySelectorAll("input[name=status]").forEach(x=>x.onchange=toggleAttendanceOptions);$("closeDialog").onclick=()=>eventDialog.close();
-$("eventForm").onsubmit=async e=>{e.preventDefault();try{const id=Number($("eventId").value);await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({
-  player_id:state.playerId,
-  attendance_status:document.querySelector("input[name=status]:checked").value,
-  leave_reason:$("leaveReason").value,
-  practice_duration:document.querySelector("input[name=practiceDuration]:checked")?.value||"full",
-  attendance_note:$("attendanceNote").value,
-  player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
-  parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
-})});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
+$("eventForm").onsubmit=async e=>{e.preventDefault();try{
+  const id=Number($("eventId").value);
+  const selectedStatus=document.querySelector("input[name=status]:checked").value;
+  const isPartialLeave=selectedStatus==="morning_leave"||selectedStatus==="afternoon_leave";
+  await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({
+    player_id:state.playerId,
+    attendance_status:selectedStatus==="leave"?"leave":"attend",
+    leave_reason:$("leaveReason").value,
+    practice_duration:isPartialLeave?selectedStatus:"full",
+    attendance_note:$("attendanceNote").value,
+    player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
+    parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
+  })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 
 let integratedAdminToken="";
 
