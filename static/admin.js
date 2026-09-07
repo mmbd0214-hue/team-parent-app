@@ -162,7 +162,7 @@ function renderEventPlayers(sel=null){
   if(sel!==null)eventSelectedPlayerIds=new Set(sel.map(Number));
   renderEventPlayerTeamFilter();
   const team=$("eventPlayerTeamFilter")?.value||"all";
-  const players=cache.players.filter(p=>p.active&&(team==="all"||String(p.team)===team));
+  const players=cache.players.filter(p=>p.active&&(team==="all"||String(p.team)===team)).sort((a,b)=>{const an=Number(a.number),bn=Number(b.number),av=String(a.number??"").trim(),bv=String(b.number??"").trim();if(av&&bv&&Number.isFinite(an)&&Number.isFinite(bn)&&an!==bn)return an-bn;if(av&&!bv)return -1;if(!av&&bv)return 1;const c=av.localeCompare(bv,"zh-Hant",{numeric:true,sensitivity:"base"});return c||String(a.name||"").localeCompare(String(b.name||""),"zh-Hant",{numeric:true});});
   $("eventPlayerChoices").innerHTML=players.map(p=>`<label class="choice"><input type="checkbox" value="${p.id}" ${eventSelectedPlayerIds.has(Number(p.id))?"checked":""}> ${p.name}/${p.team}${p.number?` #${p.number}`:""}</label>`).join("")||'<div class="muted">此分組沒有球員</div>';
   updateEventPlayerSelectedCount();
 }
