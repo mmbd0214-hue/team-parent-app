@@ -145,8 +145,43 @@ window.toggleParentAdmin=async(id,enabled)=>{
 };
 
 async function loadEvents(){cache.events=await api("/api/admin/events");$("eventTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>日期</th><th>活動</th><th>類型</th><th>通知對象</th><th>回覆</th><th>出席</th><th>請假</th><th>餐點</th><th>操作</th></tr></thead><tbody>${cache.events.map(e=>`<tr><td>${e.event_date}</td><td><strong>${e.title}</strong><div>${e.location}</div><div class="muted">集合：${e.meet_time_tbd?"未定":(e.meet_time||"未定")}｜${e.match_count||0} 場</div></td><td><span class="tag">${e.event_type==="game"?"比賽":e.event_type==="practice"?"練球":"活動"}</span></td><td>${e.invited} 位球員</td><td>${e.replied}/${e.invited} <span class="tag ${Number(e.replied)<Number(e.invited)?"amber":"green"}">${Number(e.invited)-Number(e.replied)} 未回覆</span></td><td>${e.attend}</td><td>${e.leave}</td><td>${e.meal_enabled===false?'<span class="tag">不訂餐</span>':`${e.meals} 份`}</td><td><div class="rowActions"><button onclick="viewEvent(${e.id})">統計 / 通知</button><button onclick="editEvent(${e.id})">編輯</button><button onclick="deleteEvent(${e.id}, '${e.title.replace(/'/g, "\\'")}')">刪除</button></div></td></tr>`).join("")}</tbody></table></div>`}
-function renderEventPlayers(sel=[]){const s=new Set(sel.map(Number));$("eventPlayerChoices").innerHTML=cache.players.filter(p=>p.active).map(p=>`<label class="choice"><input type="checkbox" value="${p.id}" ${s.has(Number(p.id))?"checked":""}> ${p.name}/${p.team}${p.number?` #${p.number}`:""}</label>`).join("")}
-window.toggleAllPlayers=v=>document.querySelectorAll("#eventPlayerChoices input").forEach(x=>x.checked=v);
+let eventSelectedPlayerIds=new Set();
+function eventPlayerTeams(){return [...new Set(cache.players.filter(p=>p.active).map(p=>p.team).filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b),"zh-Hant",{numeric:true}));}
+function updateEventPlayerSelectedCount(){
+  const el=$("eventPlayerSelectedCount");
+  if(el)el.textContent=`已選擇：${eventSelectedPlayerIds.size} 人`;
+}
+function renderEventPlayerTeamFilter(){
+  const f=$("eventPlayerTeamFilter");
+  if(!f)return;
+  const current=f.value||"all";
+  f.innerHTML=`<option value="all">全部組別</option>`+eventPlayerTeams().map(t=>`<option value="${String(t).replace(/&/g,"&amp;").replace(/"/g,"&quot;")}">${t}</option>`).join("");
+  f.value=[...f.options].some(o=>o.value===current)?current:"all";
+}
+function renderEventPlayers(sel=null){
+  if(sel!==null)eventSelectedPlayerIds=new Set(sel.map(Number));
+  renderEventPlayerTeamFilter();
+  const team=$("eventPlayerTeamFilter")?.value||"all";
+  const players=cache.players.filter(p=>p.active&&(team==="all"||String(p.team)===team));
+  $("eventPlayerChoices").innerHTML=players.map(p=>`<label class="choice"><input type="checkbox" value="${p.id}" ${eventSelectedPlayerIds.has(Number(p.id))?"checked":""}> ${p.name}/${p.team}${p.number?` #${p.number}`:""}</label>`).join("")||'<div class="muted">此分組沒有球員</div>';
+  updateEventPlayerSelectedCount();
+}
+$("eventPlayerTeamFilter")?.addEventListener("change",()=>renderEventPlayers());
+document.addEventListener("change",e=>{
+  if(e.target.matches("#eventPlayerChoices input[type=checkbox]")){
+    const id=Number(e.target.value);
+    if(e.target.checked)eventSelectedPlayerIds.add(id);else eventSelectedPlayerIds.delete(id);
+    updateEventPlayerSelectedCount();
+  }
+});
+window.toggleAllPlayers=v=>{
+  document.querySelectorAll("#eventPlayerChoices input").forEach(x=>{
+    x.checked=v;
+    const id=Number(x.value);
+    if(v)eventSelectedPlayerIds.add(id);else eventSelectedPlayerIds.delete(id);
+  });
+  updateEventPlayerSelectedCount();
+};
 function updateMealOptionUI(){
   const enabled=$("eventMealEnabledInput").checked;
   $("eventMealPriceWrap").classList.toggle("hidden",!enabled);
@@ -156,7 +191,7 @@ $("eventMealEnabledInput").onchange=updateMealOptionUI;
 
 window.openEvent=()=>{$("adminEventForm").reset();$("editEventId").value="";$("eventDialogTitle").textContent="建立活動 / 比賽";$("eventStatusLabel").classList.add("hidden");$("eventMealEnabledInput").checked=true;$("eventMealInput").value=100;updateMealOptionUI();$("eventMeetTimeInput").value="";$("eventMeetTimeInput").disabled=false;$("eventMeetTimeTbdInput").checked=false;$("matchRows").innerHTML="";addMatchRow();renderEventPlayers([]);eventDialog.showModal()};
 window.editEvent=async id=>{try{const d=await api(`/api/admin/events/${id}`),e=d.event;$("editEventId").value=e.id;$("eventDialogTitle").textContent="編輯活動 / 比賽";$("eventTitleInput").value=e.title;$("eventDateInput").value=e.event_date;$("eventDeadlineInput").value=e.response_deadline||"";$("eventLocationInput").value=e.location;$("eventTypeInput").value=e.event_type;$("eventMealEnabledInput").checked=e.meal_enabled!==false;$("eventMealInput").value=e.meal_price;updateMealOptionUI();$("eventStatusInput").value=e.status;$("eventStatusLabel").classList.remove("hidden");$("eventMeetTimeTbdInput").checked=!!e.meet_time_tbd;$("eventMeetTimeInput").disabled=!!e.meet_time_tbd;$("eventMeetTimeInput").value=e.meet_time||"";$("matchRows").innerHTML="";(d.matches||[]).forEach(m=>addMatchRow(m));if(!(d.matches||[]).length)addMatchRow();renderEventPlayers(d.players.map(x=>x.id));eventDialog.showModal()}catch(e){toast(e.message)}};
-$("adminEventForm").onsubmit=async e=>{e.preventDefault();const id=$("editEventId").value,b={title:$("eventTitleInput").value,event_date:$("eventDateInput").value,location:$("eventLocationInput").value,meal_enabled:$("eventMealEnabledInput").checked,meal_price:$("eventMealEnabledInput").checked?Number($("eventMealInput").value||0):0,event_type:$("eventTypeInput").value,response_deadline:$("eventDeadlineInput").value||null,meet_time:$("eventMeetTimeTbdInput").checked?null:($("eventMeetTimeInput").value||null),meet_time_tbd:$("eventMeetTimeTbdInput").checked,matches:collectMatches(),player_ids:[...document.querySelectorAll("#eventPlayerChoices input:checked")].map(x=>Number(x.value))};if(id)b.status=$("eventStatusInput").value;try{await api(id?`/api/admin/events/${id}`:"/api/admin/events",{method:id?"PUT":"POST",body:JSON.stringify(b)});eventDialog.close();toast("活動已儲存");await Promise.all([loadEvents(),loadDashboard()])}catch(e){toast(e.message)}};
+$("adminEventForm").onsubmit=async e=>{e.preventDefault();const id=$("editEventId").value,b={title:$("eventTitleInput").value,event_date:$("eventDateInput").value,location:$("eventLocationInput").value,meal_enabled:$("eventMealEnabledInput").checked,meal_price:$("eventMealEnabledInput").checked?Number($("eventMealInput").value||0):0,event_type:$("eventTypeInput").value,response_deadline:$("eventDeadlineInput").value||null,meet_time:$("eventMeetTimeTbdInput").checked?null:($("eventMeetTimeInput").value||null),meet_time_tbd:$("eventMeetTimeTbdInput").checked,matches:collectMatches(),player_ids:[...eventSelectedPlayerIds]};if(id)b.status=$("eventStatusInput").value;try{await api(id?`/api/admin/events/${id}`:"/api/admin/events",{method:id?"PUT":"POST",body:JSON.stringify(b)});eventDialog.close();toast("活動已儲存");await Promise.all([loadEvents(),loadDashboard()])}catch(e){toast(e.message)}};
 
 async function loadTargets(mode="all"){if(!currentEventId)return;const primary=$("primaryOnly").checked,d=await api(`/api/admin/events/${currentEventId}/notification-targets?mode=${mode}&primary_only=${primary}`);$("notifyTargets").innerHTML=`<div><strong>${mode==="unanswered"?"未回覆提醒":"本次通知"}：${d.recipient_count} 位 LINE 家長</strong></div><div class="recipientList">${d.recipients.map(r=>`<span class="tag green">${r.parent_name}｜${r.players.map(p=>p.name).join("、")}</span>`).join("")||'<span class="tag amber">沒有可通知家長</span>'}</div>${d.missing_count?`<div class="missingBox">⚠️ ${d.missing_count} 筆缺少可用 LINE User ID，無法推播。</div>`:""}`}
 async function loadLogs(){const logs=await api(`/api/admin/events/${currentEventId}/notification-logs`);$("notifyLogs").innerHTML=`<div class="tableWrap"><table><thead><tr><th>時間</th><th>類型</th><th>家長</th><th>球員</th><th>結果</th></tr></thead><tbody>${logs.map(x=>`<tr><td>${new Date(x.sent_at).toLocaleString("zh-TW")}</td><td>${x.notification_type==="reminder"?"提醒":"通知"}</td><td>${x.parent_name||"-"}</td><td>${x.player_name||"-"}</td><td><span class="tag ${x.status==="sent"?"green":"red"}">${x.status==="sent"?"成功":"失敗"}</span>${x.error_message?`<div>${x.error_message}</div>`:""}</td></tr>`).join("")||'<tr><td colspan="5">尚無通知紀錄</td></tr>'}</tbody></table></div>`}
