@@ -777,6 +777,45 @@ def parent_events(authorization: str | None = Header(default=None)):
             return result
 
 
+@app.get("/api/events/{event_id}/attendance-summary")
+def parent_event_attendance_summary(event_id: int, authorization: str | None = Header(default=None)):
+    p = current_parent(authorization)
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            # Parents may only view the roster for an event that includes one of their linked players.
+            cur.execute("""
+                SELECT 1
+                FROM event_players ep
+                JOIN parent_players pp ON pp.player_id=ep.player_id
+                WHERE ep.event_id=%s AND pp.parent_id=%s
+                LIMIT 1
+            """, (event_id, p["id"]))
+            if not cur.fetchone():
+                raise HTTPException(403, "無權查看此活動名單")
+
+            cur.execute("""
+                SELECT p.id,p.name,p.team,p.number,
+                       a.attendance_status,a.practice_duration
+                FROM event_players ep
+                JOIN players p ON p.id=ep.player_id
+                LEFT JOIN attendance a
+                  ON a.event_id=ep.event_id AND a.player_id=ep.player_id
+                WHERE ep.event_id=%s AND p.active=TRUE
+            """, (event_id,))
+            rows = cur.fetchall()
+
+    def number_key(row):
+        raw = str(row.get("number") or "").strip()
+        try:
+            return (0, int(raw), raw, str(row.get("name") or ""))
+        except ValueError:
+            return (1, 10**9, raw, str(row.get("name") or ""))
+
+    rows.sort(key=lambda row: (str(row.get("team") or ""), number_key(row)))
+    return rows
+
+
 @app.get("/api/players/{player_id}/attendance")
 def player_attendance(player_id: int, authorization: str | None = Header(default=None)):
     p = current_parent(authorization)

@@ -499,10 +499,49 @@ function renderEvents(){
     }
     const meet=ev.meet_time_tbd?"未定":(ev.meet_time||"未定");
     const matches=(ev.matches||[]).map((m,i)=>`<div class="matchLine"><strong>第${i+1}場</strong>　${m.game_time_tbd?"未定":(m.game_time||"未定")}　🆚 ${m.opponent||"未定"}</div>`).join("");
-    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}${ev.meal_enabled===false?"":`<div class="meta">🍱 ${money(ev.meal_price)}/份</div>`}<button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button></div>`
+    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}${ev.meal_enabled===false?"":`<div class="meta">🍱 ${money(ev.meal_price)}/份</div>`}<div class="eventActionRow"><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button><button class="secondaryBtn" onclick="openAttendanceList(${ev.id})">查看出席名單</button></div></div>`
   }).join("")||`<div class="card muted">目前沒有活動</div>`
 }
 function renderPayments(rows){const card=p=>`<div class="card payment"><div><strong>${p.title}</strong><div class="meta">${p.due_date||""}</div></div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></div></div></div>`;$("payments").innerHTML=rows.map(card).join("")||`<div class="card">目前沒有繳費項目</div>`;const u=rows.filter(x=>x.status!=="paid");$("paymentsPreview").innerHTML=u.slice(0,3).map(card).join("")||`<div class="card">目前沒有待繳費用</div>`}
+function escapeHtml(value){
+  return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+}
+function attendancePlayerLabel(p){
+  const no=String(p.number??"").trim();
+  return `${no?`#${escapeHtml(no)} `:""}${escapeHtml(p.name)}${p.team?` <span class="attendanceTeam">${escapeHtml(p.team)}</span>`:""}`;
+}
+function attendanceStatusText(p){
+  if(p.attendance_status==="attend"){
+    if(p.practice_duration==="morning_leave") return "下午出席";
+    if(p.practice_duration==="afternoon_leave") return "上午出席";
+    if(p.practice_duration==="half") return "半天出席";
+    return "出席";
+  }
+  if(p.attendance_status==="leave") return "請假";
+  if(p.attendance_status==="maybe") return "未確定";
+  return "尚未回覆";
+}
+window.openAttendanceList=async id=>{
+  const ev=state.events.find(x=>Number(x.id)===Number(id));
+  if(!ev)return;
+  $("attendanceListTitle").textContent=ev.title;
+  $("attendanceListContent").innerHTML='<div class="muted">載入中...</div>';
+  attendanceListDialog.showModal();
+  try{
+    const rows=await api(`/api/events/${id}/attendance-summary`);
+    const groups=[
+      {key:"attend",title:"✅ 出席",rows:rows.filter(x=>x.attendance_status==="attend")},
+      {key:"leave",title:"請假",rows:rows.filter(x=>x.attendance_status==="leave")},
+      {key:"maybe",title:"未確定",rows:rows.filter(x=>x.attendance_status==="maybe")},
+      {key:"pending",title:"尚未回覆",rows:rows.filter(x=>!x.attendance_status)}
+    ];
+    $("attendanceListContent").innerHTML=groups.map(g=>`<section class="attendanceGroup ${g.key}"><div class="attendanceGroupTitle"><strong>${g.title}</strong><span>${g.rows.length} 人</span></div>${g.rows.length?`<div class="attendancePlayerList">${g.rows.map(p=>`<div class="attendancePlayer"><span>${attendancePlayerLabel(p)}</span><small>${escapeHtml(attendanceStatusText(p))}</small></div>`).join("")}</div>`:'<div class="muted attendanceEmpty">目前沒有</div>'}</section>`).join("");
+  }catch(e){
+    $("attendanceListContent").innerHTML=`<div class="card muted">${escapeHtml(e.message)}</div>`;
+  }
+};
+$("closeAttendanceListDialog").onclick=()=>attendanceListDialog.close();
+
 window.openEvent=id=>{
   const ev=state.events.find(x=>Number(x.id)===Number(id));
   if(!ev)return;

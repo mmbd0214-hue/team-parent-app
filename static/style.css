@@ -128,3 +128,20 @@ nav:has(#managementNav:not(.hidden)){
   width:100%;border:0;text-align:left;background:#fff3cd;color:#6a4d00;
   font-weight:800;cursor:pointer;margin-bottom:12px;
 }
+
+/* Parent event attendance list */
+.eventActionRow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.eventActionRow button{margin:0}
+.secondaryBtn{background:var(--card,#fff)!important;color:var(--text,#222)!important;border:1px solid var(--border,#ddd)!important}
+#attendanceListDialog{width:min(92vw,560px);max-height:82%;padding:0;border:0;border-radius:18px}
+.attendanceListDialogBody{padding:20px}
+.attendanceSummaryContent{display:grid;gap:12px;margin-top:12px}
+.attendanceGroup{border:1px solid var(--border,#ddd);border-radius:14px;overflow:hidden}
+.attendanceGroupTitle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;background:rgba(127,127,127,.08)}
+.attendancePlayerList{display:grid}
+.attendancePlayer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 13px;border-top:1px solid var(--border,#eee)}
+.attendancePlayer:first-child{border-top:0}
+.attendancePlayer small{color:var(--muted);white-space:nowrap}
+.attendanceTeam{display:inline-block;margin-left:5px;padding:2px 6px;border-radius:999px;background:rgba(127,127,127,.12);font-size:11px;color:var(--muted)}
+.attendanceEmpty{padding:10px 13px}
+@media(max-width:420px){.eventActionRow{grid-template-columns:1fr}.attendancePlayer{align-items:flex-start}.attendancePlayer small{white-space:normal;text-align:right}}
