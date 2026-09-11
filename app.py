@@ -796,7 +796,11 @@ def parent_event_attendance_summary(event_id: int, authorization: str | None = H
 
             cur.execute("""
                 SELECT p.id,p.name,p.team,p.number,
+<<<<<<< HEAD
                        a.attendance_status,a.practice_duration,a.attendance_note
+=======
+                       a.attendance_status,a.practice_duration,a.attendance_note,a.leave_reason
+>>>>>>> e70e82f (Show attendance note or leave reason by status)
                 FROM event_players ep
                 JOIN players p ON p.id=ep.player_id
                 LEFT JOIN attendance a
@@ -890,6 +894,10 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
             player_meals = body.player_meals if event_row["meal_enabled"] else 0
             parent_meals = body.parent_meals if event_row["meal_enabled"] else 0
 
+            # 出席使用備註、請假使用請假原因；切換狀態時清除另一欄舊資料。
+            leave_reason = body.leave_reason.strip() if body.attendance_status == "leave" else ""
+            attendance_note = body.attendance_note.strip() if body.attendance_status == "attend" else ""
+
             cur.execute("""
                 INSERT INTO attendance(
                     event_id,player_id,attendance_status,
@@ -906,8 +914,8 @@ def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None
                     parent_meals=EXCLUDED.parent_meals
             """, (
                 event_id,body.player_id,body.attendance_status,
-                body.leave_reason.strip(),body.practice_duration,
-                body.attendance_note.strip(),
+                leave_reason,body.practice_duration,
+                attendance_note,
                 player_meals,parent_meals
             ))
 
