@@ -796,11 +796,7 @@ def parent_event_attendance_summary(event_id: int, authorization: str | None = H
 
             cur.execute("""
                 SELECT p.id,p.name,p.team,p.number,
-<<<<<<< HEAD
-                       a.attendance_status,a.practice_duration,a.attendance_note
-=======
                        a.attendance_status,a.practice_duration,a.attendance_note,a.leave_reason
->>>>>>> e70e82f (Show attendance note or leave reason by status)
                 FROM event_players ep
                 JOIN players p ON p.id=ep.player_id
                 LEFT JOIN attendance a
