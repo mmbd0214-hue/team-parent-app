@@ -189,9 +189,9 @@
       <label><input type="radio" name="practice_duration" value="afternoon_leave"><span>上午出席</span></label>
     </div>
   </div>
-  <div id="gameAttendNoteBox" class="hidden">
-    <label for="attendanceNote">出席備註</label>
-    <textarea id="attendanceNote" rows="3" placeholder="例如：晚點到、第二場無法出賽"></textarea>
+  <div id="attendanceNoteBox">
+    <label for="attendanceNote">備註（選填）</label>
+    <textarea id="attendanceNote" rows="3" placeholder="例如：晚點到、只能參加上午、第二場無法出賽"></textarea>
   </div>
   <div id="leaveBox" class="hidden">
     <label for="leaveReason">請假原因</label>
@@ -208,7 +208,17 @@
 </form>
 </dialog>
 
+<dialog id="attendanceListDialog">
+  <div class="attendanceListDialogBody">
+    <div class="dialogTitle">
+      <div><div class="eyebrow">活動出席狀況</div><h2 id="attendanceListTitle"></h2></div>
+      <button type="button" id="closeAttendanceListDialog" class="iconBtn">✕</button>
+    </div>
+    <div id="attendanceListContent" class="attendanceSummaryContent"></div>
+  </div>
+</dialog>
+
 <div id="toast"></div>
-<script src="/static/app.js?v=20260905-6"></script>
+<script src="/static/app.js?v=20260910-1"></script>
 </body>
 </html>
