@@ -499,7 +499,7 @@ function renderEvents(){
     }
     const meet=ev.meet_time_tbd?"未定":(ev.meet_time||"未定");
     const matches=(ev.matches||[]).map((m,i)=>`<div class="matchLine"><strong>第${i+1}場</strong>　${m.game_time_tbd?"未定":(m.game_time||"未定")}　🆚 ${m.opponent||"未定"}</div>`).join("");
-    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}${ev.meal_enabled===false?"":`<div class="meta">🍱 ${money(ev.meal_price)}/份</div>`}<div class="eventActionRow"><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button><button class="secondaryBtn" onclick="openAttendanceList(${ev.id})">查看出席名單</button></div></div>`
+    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}<div class="eventActionRow"><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button><button class="secondaryBtn" onclick="openAttendanceList(${ev.id})">查看出席名單</button></div></div>`
   }).join("")||`<div class="card muted">目前沒有活動</div>`
 }
 function renderPayments(rows){const card=p=>`<div class="card payment"><div><strong>${p.title}</strong><div class="meta">${p.due_date||""}</div></div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></div></div></div>`;$("payments").innerHTML=rows.map(card).join("")||`<div class="card">目前沒有繳費項目</div>`;const u=rows.filter(x=>x.status!=="paid");$("paymentsPreview").innerHTML=u.slice(0,3).map(card).join("")||`<div class="card">目前沒有待繳費用</div>`}
@@ -568,10 +568,6 @@ window.openEvent=id=>{
   $("attendanceNote").value=a?.attendance_note||"";
 
 
-  $("mealSection").classList.toggle("hidden",ev.meal_enabled===false);
-  $("playerMeals").value=ev.meal_enabled===false?0:(a?.player_meals??1);
-  $("parentMeals").value=ev.meal_enabled===false?0:(a?.parent_meals??0);
-
   toggleAttendanceOptions();
   eventDialog.showModal();
 };
@@ -603,9 +599,7 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{
     attendance_status:selectedStatus,
     leave_reason:selectedStatus==="leave"?$("leaveReason").value:"",
     practice_duration:selectedDuration,
-    attendance_note:selectedStatus==="attend"?$("attendanceNote").value:"",
-    player_meals:$("mealSection").classList.contains("hidden")?0:Number($("playerMeals").value),
-    parent_meals:$("mealSection").classList.contains("hidden")?0:Number($("parentMeals").value)
+    attendance_note:selectedStatus==="attend"?$("attendanceNote").value:""
   })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 
 let integratedAdminToken="";
