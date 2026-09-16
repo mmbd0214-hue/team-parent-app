@@ -133,9 +133,48 @@ nav:has(#managementNav:not(.hidden)){
 .eventActionRow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
 .eventActionRow button{margin:0}
 .secondaryBtn{background:var(--card,#fff)!important;color:var(--text,#222)!important;border:1px solid var(--border,#ddd)!important}
-#attendanceListDialog{width:min(92vw,560px);max-height:82%;padding:0;border:0;border-radius:18px}
-.attendanceListDialogBody{padding:20px}
-.attendanceSummaryContent{display:grid;gap:12px;margin-top:12px}
+#attendanceListDialog{
+  width:min(92vw,560px);
+  max-width:560px;
+  height:auto;
+  max-height:82dvh;
+  padding:0;
+  border:0;
+  border-radius:18px;
+  overflow:hidden;
+  overscroll-behavior:contain;
+}
+#attendanceListDialog::backdrop{
+  background:rgba(0,0,0,.45);
+  touch-action:none;
+}
+.attendanceListDialogBody{
+  padding:20px;
+  box-sizing:border-box;
+  max-height:82dvh;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.attendanceListDialogBody .dialogTitle{
+  flex:0 0 auto;
+}
+.attendanceSummaryContent{
+  display:grid;
+  gap:12px;
+  margin-top:12px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  min-height:0;
+  flex:1 1 auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+body.attendance-dialog-open{
+  overflow:hidden;
+  overscroll-behavior:none;
+  touch-action:none;
+}
 .attendanceGroup{border:1px solid var(--border,#ddd);border-radius:14px;overflow:hidden}
 .attendanceGroupTitle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 13px;background:rgba(127,127,127,.08)}
 .attendancePlayerList{display:grid}

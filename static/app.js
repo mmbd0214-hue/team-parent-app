@@ -521,12 +521,35 @@ function attendanceStatusText(p){
   if(p.attendance_status==="maybe") return "未確定";
   return "尚未回覆";
 }
+let attendanceDialogScrollY=0;
+
+function lockAttendanceDialogPage(){
+  attendanceDialogScrollY=window.scrollY || document.documentElement.scrollTop || 0;
+  document.body.classList.add("attendance-dialog-open");
+  document.body.style.position="fixed";
+  document.body.style.top=`-${attendanceDialogScrollY}px`;
+  document.body.style.left="0";
+  document.body.style.right="0";
+  document.body.style.width="100%";
+}
+
+function unlockAttendanceDialogPage(){
+  document.body.classList.remove("attendance-dialog-open");
+  document.body.style.position="";
+  document.body.style.top="";
+  document.body.style.left="";
+  document.body.style.right="";
+  document.body.style.width="";
+  window.scrollTo(0,attendanceDialogScrollY);
+}
 window.openAttendanceList=async id=>{
   const ev=state.events.find(x=>Number(x.id)===Number(id));
   if(!ev)return;
   $("attendanceListTitle").textContent=ev.title;
   $("attendanceListContent").innerHTML='<div class="muted">載入中...</div>';
+  lockAttendanceDialogPage();
   attendanceListDialog.showModal();
+  $("attendanceListContent").scrollTop=0;
   try{
     const rows=await api(`/api/events/${id}/attendance-summary`);
     const groups=[
@@ -540,7 +563,13 @@ window.openAttendanceList=async id=>{
     $("attendanceListContent").innerHTML=`<div class="card muted">${escapeHtml(e.message)}</div>`;
   }
 };
-$("closeAttendanceListDialog").onclick=()=>attendanceListDialog.close();
+$("closeAttendanceListDialog").onclick=()=>{
+  attendanceListDialog.close();
+};
+
+attendanceListDialog.addEventListener("close",()=>{
+  unlockAttendanceDialogPage();
+});
 
 window.openEvent=id=>{
   const ev=state.events.find(x=>Number(x.id)===Number(id));
