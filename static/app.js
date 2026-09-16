@@ -521,26 +521,12 @@ function attendanceStatusText(p){
   if(p.attendance_status==="maybe") return "未確定";
   return "尚未回覆";
 }
-let attendanceDialogScrollY=0;
-
 function lockAttendanceDialogPage(){
-  attendanceDialogScrollY=window.scrollY || document.documentElement.scrollTop || 0;
   document.body.classList.add("attendance-dialog-open");
-  document.body.style.position="fixed";
-  document.body.style.top=`-${attendanceDialogScrollY}px`;
-  document.body.style.left="0";
-  document.body.style.right="0";
-  document.body.style.width="100%";
 }
 
 function unlockAttendanceDialogPage(){
   document.body.classList.remove("attendance-dialog-open");
-  document.body.style.position="";
-  document.body.style.top="";
-  document.body.style.left="";
-  document.body.style.right="";
-  document.body.style.width="";
-  window.scrollTo(0,attendanceDialogScrollY);
 }
 window.openAttendanceList=async id=>{
   const ev=state.events.find(x=>Number(x.id)===Number(id));
