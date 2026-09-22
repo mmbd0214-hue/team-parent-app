@@ -549,9 +549,9 @@ window.openPaymentTransfer=id=>{
     if(radio)radio.checked=true;
   }
 
-  const today=new Date().toISOString().slice(0,10);
-  $("paymentCashDate").value=p.payment_method==="cash"?(p.transfer_date||today):today;
-  $("paymentTransferDate").value=p.payment_method==="transfer"?(p.transfer_date||today):today;
+  // 新回報時日期預設空白；若是待確認資料重新編輯，保留原本已填日期。
+  $("paymentCashDate").value=p.payment_method==="cash"?(p.transfer_date||""):"";
+  $("paymentTransferDate").value=p.payment_method==="transfer"?(p.transfer_date||""):"";
   $("paymentTransferLast5").value=p.payment_method==="transfer"?(p.transfer_account_last5||""):"";
   updatePaymentMethodFields();
   paymentTransferDialog.showModal();
