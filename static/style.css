@@ -189,3 +189,6 @@ body.attendance-dialog-open{
 /* Payment report fields: keep each label and input on separate lines */
 #paymentCashFields label,#paymentTransferFields label{display:block;font-weight:700;margin:18px 0 8px}
 #paymentCashFields input,#paymentTransferFields input{display:block;width:100%;margin-top:8px;border:1px solid #dce1dc;border-radius:12px;padding:10px}
+
+/* Parent payment note */
+.paymentNote{margin-top:8px;font-size:14px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}

@@ -513,7 +513,10 @@ function paymentCard(p){
   const action=p.status==="paid"
     ? ""
     : `<button type="button" class="secondaryBtn" onclick="openPaymentTransfer(${p.id})">${p.status==="pending"?"修改繳費資料":"回報繳費"}</button>`;
-  return `<div class="card payment"><div><strong>${escapeHtml(p.title)}</strong><div class="meta">${escapeHtml(p.due_date||"")}</div>${transferInfo}${action?`<div style="margin-top:10px">${action}</div>`:""}</div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${paymentStatusText(p)}</span></div></div></div>`;
+  const note=p.note?.trim()
+    ? `<div class="paymentNote"><strong>備註：</strong>${escapeHtml(p.note)}</div>`
+    : "";
+  return `<div class="card payment"><div><strong>${escapeHtml(p.title)}</strong><div class="meta">${escapeHtml(p.due_date||"")}</div>${note}${transferInfo}${action?`<div style="margin-top:10px">${action}</div>`:""}</div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${paymentStatusText(p)}</span></div></div></div>`;
 }
 function renderPayments(rows){
   $("payments").innerHTML=rows.map(paymentCard).join("")||`<div class="card">目前沒有繳費項目</div>`;
