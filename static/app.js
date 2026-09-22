@@ -506,12 +506,13 @@ function paymentStatusText(p){
   return p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳";
 }
 function paymentCard(p){
-  const transferInfo=p.transfer_date||p.transfer_account_last5
-    ? `<div class="meta">匯款：${escapeHtml(p.transfer_date||"-")}　後五碼：${escapeHtml(p.transfer_account_last5||"-")}</div>`
+  const methodText=p.payment_method==="cash"?"現場繳交":p.payment_method==="transfer"?"轉帳匯款":"";
+  const transferInfo=p.transfer_date||p.transfer_account_last5||methodText
+    ? `<div class="meta">${methodText?`方式：${escapeHtml(methodText)}　`:""}日期：${escapeHtml(p.transfer_date||"-")}${p.payment_method==="transfer"?`　後五碼：${escapeHtml(p.transfer_account_last5||"-")}`:""}</div>`
     : "";
   const action=p.status==="paid"
     ? ""
-    : `<button type="button" class="secondaryBtn" onclick="openPaymentTransfer(${p.id})">${p.status==="pending"?"修改匯款資料":"已匯款"}</button>`;
+    : `<button type="button" class="secondaryBtn" onclick="openPaymentTransfer(${p.id})">${p.status==="pending"?"修改繳費資料":"回報繳費"}</button>`;
   return `<div class="card payment"><div><strong>${escapeHtml(p.title)}</strong><div class="meta">${escapeHtml(p.due_date||"")}</div>${transferInfo}${action?`<div style="margin-top:10px">${action}</div>`:""}</div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${paymentStatusText(p)}</span></div></div></div>`;
 }
 function renderPayments(rows){
@@ -520,15 +521,37 @@ function renderPayments(rows){
   $("paymentsPreview").innerHTML=u.slice(0,3).map(paymentCard).join("")||`<div class="card">目前沒有待繳費用</div>`;
 }
 
+function updatePaymentMethodFields(){
+  const method=document.querySelector('input[name="paymentMethod"]:checked')?.value||"";
+  $("paymentCashFields").classList.toggle("hidden",method!=="cash");
+  $("paymentTransferFields").classList.toggle("hidden",method!=="transfer");
+  $("paymentCashDate").required=method==="cash";
+  $("paymentTransferDate").required=method==="transfer";
+  $("paymentTransferLast5").required=method==="transfer";
+}
+
+document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>{
+  x.addEventListener("change",updatePaymentMethodFields);
+});
+
 window.openPaymentTransfer=id=>{
   const p=state.payments.find(x=>Number(x.id)===Number(id));
   if(!p)return;
   $("paymentTransferId").value=p.id;
   $("paymentTransferTitle").textContent=`${p.title}｜${money(p.amount)}`;
-  $("paymentTransferDate").value=p.transfer_date||new Date().toISOString().slice(0,10);
-  $("paymentTransferLast5").value=p.transfer_account_last5||"";
+
+  document.querySelectorAll('input[name="paymentMethod"]').forEach(x=>x.checked=false);
+  if(p.payment_method){
+    const radio=document.querySelector(`input[name="paymentMethod"][value="${p.payment_method}"]`);
+    if(radio)radio.checked=true;
+  }
+
+  const today=new Date().toISOString().slice(0,10);
+  $("paymentCashDate").value=p.payment_method==="cash"?(p.transfer_date||today):today;
+  $("paymentTransferDate").value=p.payment_method==="transfer"?(p.transfer_date||today):today;
+  $("paymentTransferLast5").value=p.payment_method==="transfer"?(p.transfer_account_last5||""):"";
+  updatePaymentMethodFields();
   paymentTransferDialog.showModal();
-  setTimeout(()=>$("paymentTransferLast5").focus(),50);
 };
 
 $("closePaymentTransferDialog").onclick=()=>paymentTransferDialog.close();
@@ -536,20 +559,37 @@ $("cancelPaymentTransfer").onclick=()=>paymentTransferDialog.close();
 $("paymentTransferLast5").addEventListener("input",e=>{
   e.target.value=e.target.value.replace(/\D/g,"").slice(0,5);
 });
+
 $("paymentTransferForm").onsubmit=async e=>{
   e.preventDefault();
   const id=Number($("paymentTransferId").value);
-  const transfer_date=$("paymentTransferDate").value;
-  const account_last5=$("paymentTransferLast5").value.trim();
-  if(!transfer_date){toast("請選擇轉帳日期");return;}
-  if(!/^\d{5}$/.test(account_last5)){toast("帳號後五碼請輸入 5 位數字");return;}
+  const payment_method=document.querySelector('input[name="paymentMethod"]:checked')?.value||"";
+
+  if(!payment_method){
+    toast("請選擇現場繳交或轉帳匯款");
+    return;
+  }
+
+  let transfer_date="";
+  let account_last5="";
+
+  if(payment_method==="cash"){
+    transfer_date=$("paymentCashDate").value;
+    if(!transfer_date){toast("請選擇繳交日期");return;}
+  }else{
+    transfer_date=$("paymentTransferDate").value;
+    account_last5=$("paymentTransferLast5").value.trim();
+    if(!transfer_date){toast("請選擇轉帳日期");return;}
+    if(!/^\d{5}$/.test(account_last5)){toast("帳號後五碼請輸入 5 位數字");return;}
+  }
+
   try{
     await api(`/api/payments/${id}/transfer`,{
       method:"PUT",
-      body:JSON.stringify({transfer_date,account_last5})
+      body:JSON.stringify({payment_method,transfer_date,account_last5})
     });
     paymentTransferDialog.close();
-    toast("匯款資料已送出，等待管理員確認");
+    toast("繳費資料已送出，等待管理員確認");
     await refresh();
   }catch(err){
     toast(err.message);

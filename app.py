@@ -108,6 +108,7 @@ def init_db():
 
             ALTER TABLE payments ADD COLUMN IF NOT EXISTS transfer_date DATE;
             ALTER TABLE payments ADD COLUMN IF NOT EXISTS transfer_account_last5 TEXT DEFAULT '';
+            ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT '';
 
             CREATE TABLE IF NOT EXISTS parent_content_seen (
                 parent_id BIGINT NOT NULL REFERENCES parents(id) ON DELETE CASCADE,
@@ -941,7 +942,7 @@ def player_payments(player_id: int, authorization: str | None = Header(default=N
 
             cur.execute("""
                 SELECT id,player_id,title,amount,due_date::text,status,note,
-                       transfer_date::text,transfer_account_last5
+                       transfer_date::text,transfer_account_last5,payment_method
                 FROM payments
                 WHERE player_id=%s
                 ORDER BY
@@ -1061,8 +1062,9 @@ class PaymentIn(BaseModel):
 
 
 class PaymentTransferIn(BaseModel):
+    payment_method: str
     transfer_date: str
-    account_last5: str
+    account_last5: str = ""
 
 
 class PaymentBatchIn(BaseModel):
@@ -1513,13 +1515,19 @@ def parent_report_payment_transfer(
     authorization: str | None = Header(default=None),
 ):
     parent = current_parent(authorization)
+    payment_method = (body.payment_method or "").strip()
     transfer_date = (body.transfer_date or "").strip()
     account_last5 = (body.account_last5 or "").strip()
 
+    if payment_method not in ("cash", "transfer"):
+        raise HTTPException(400, "請選擇現場繳交或轉帳匯款")
     if not transfer_date:
-        raise HTTPException(400, "請輸入轉帳日期")
-    if len(account_last5) != 5 or not account_last5.isdigit():
-        raise HTTPException(400, "帳號後五碼必須是 5 位數字")
+        raise HTTPException(400, "請輸入繳交日期" if payment_method == "cash" else "請輸入轉帳日期")
+    if payment_method == "transfer":
+        if len(account_last5) != 5 or not account_last5.isdigit():
+            raise HTTPException(400, "帳號後五碼必須是 5 位數字")
+    else:
+        account_last5 = ""
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -1540,12 +1548,13 @@ def parent_report_payment_transfer(
             cur.execute("""
                 UPDATE payments
                 SET status='pending',
+                    payment_method=%s,
                     transfer_date=%s,
                     transfer_account_last5=%s
                 WHERE id=%s
                 RETURNING id,player_id,title,amount,due_date::text,status,note,
-                          transfer_date::text,transfer_account_last5
-            """, (transfer_date, account_last5, payment_id))
+                          transfer_date::text,transfer_account_last5,payment_method
+            """, (payment_method, transfer_date, account_last5, payment_id))
             row = cur.fetchone()
         conn.commit()
 
@@ -1563,7 +1572,7 @@ def admin_payments(authorization: str | None = Header(default=None)):
             cur.execute("""
                 SELECT pay.id,pay.player_id,p.name player_name,p.team,
                        pay.title,pay.amount,pay.due_date::text,pay.status,pay.note,
-                       pay.transfer_date::text,pay.transfer_account_last5
+                       pay.transfer_date::text,pay.transfer_account_last5,pay.payment_method
                 FROM payments pay
                 JOIN players p ON p.id=pay.player_id
                 ORDER BY

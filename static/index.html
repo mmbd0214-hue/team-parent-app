@@ -215,19 +215,35 @@
   <form id="paymentTransferForm">
     <input type="hidden" id="paymentTransferId">
     <div class="dialogTitle">
-      <div><div class="eyebrow">繳費回報</div><h2>已匯款</h2></div>
+      <div><div class="eyebrow">繳費回報</div><h2>回報繳費</h2></div>
       <button type="button" id="closePaymentTransferDialog" class="iconBtn">✕</button>
     </div>
     <p class="muted" id="paymentTransferTitle"></p>
-    <label>轉帳日期
-      <input id="paymentTransferDate" type="date" required>
-    </label>
-    <label>帳號後五碼
-      <input id="paymentTransferLast5" type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="請輸入 5 位數字" required>
-    </label>
+
+    <label>繳費方式</label>
+    <div class="recipientList">
+      <label class="check"><input type="radio" name="paymentMethod" value="cash" required> 現場繳交</label>
+      <label class="check"><input type="radio" name="paymentMethod" value="transfer" required> 轉帳匯款</label>
+    </div>
+
+    <div id="paymentCashFields" class="hidden">
+      <label>繳交日期
+        <input id="paymentCashDate" type="date">
+      </label>
+    </div>
+
+    <div id="paymentTransferFields" class="hidden">
+      <label>轉帳日期
+        <input id="paymentTransferDate" type="date">
+      </label>
+      <label>帳號後五碼
+        <input id="paymentTransferLast5" type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="請輸入 5 位數字">
+      </label>
+    </div>
+
     <div class="actions">
       <button type="button" id="cancelPaymentTransfer" class="secondaryBtn">取消</button>
-      <button type="submit">送出匯款資料</button>
+      <button type="submit">送出繳費資料</button>
     </div>
   </form>
 </dialog>
