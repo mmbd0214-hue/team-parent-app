@@ -502,7 +502,60 @@ function renderEvents(){
     return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}<div class="eventActionRow"><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button><button class="secondaryBtn" onclick="openAttendanceList(${ev.id})">查看出席名單</button></div></div>`
   }).join("")||`<div class="card muted">目前沒有活動</div>`
 }
-function renderPayments(rows){const card=p=>`<div class="card payment"><div><strong>${p.title}</strong><div class="meta">${p.due_date||""}</div></div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳"}</span></div></div></div>`;$("payments").innerHTML=rows.map(card).join("")||`<div class="card">目前沒有繳費項目</div>`;const u=rows.filter(x=>x.status!=="paid");$("paymentsPreview").innerHTML=u.slice(0,3).map(card).join("")||`<div class="card">目前沒有待繳費用</div>`}
+function paymentStatusText(p){
+  return p.status==="paid"?"已繳":p.status==="pending"?"待確認":"未繳";
+}
+function paymentCard(p){
+  const transferInfo=p.transfer_date||p.transfer_account_last5
+    ? `<div class="meta">匯款：${escapeHtml(p.transfer_date||"-")}　後五碼：${escapeHtml(p.transfer_account_last5||"-")}</div>`
+    : "";
+  const action=p.status==="paid"
+    ? ""
+    : `<button type="button" class="secondaryBtn" onclick="openPaymentTransfer(${p.id})">${p.status==="pending"?"修改匯款資料":"已匯款"}</button>`;
+  return `<div class="card payment"><div><strong>${escapeHtml(p.title)}</strong><div class="meta">${escapeHtml(p.due_date||"")}</div>${transferInfo}${action?`<div style="margin-top:10px">${action}</div>`:""}</div><div><strong>${money(p.amount)}</strong><div><span class="status ${p.status}">${paymentStatusText(p)}</span></div></div></div>`;
+}
+function renderPayments(rows){
+  $("payments").innerHTML=rows.map(paymentCard).join("")||`<div class="card">目前沒有繳費項目</div>`;
+  const u=rows.filter(x=>x.status!=="paid");
+  $("paymentsPreview").innerHTML=u.slice(0,3).map(paymentCard).join("")||`<div class="card">目前沒有待繳費用</div>`;
+}
+
+window.openPaymentTransfer=id=>{
+  const p=state.payments.find(x=>Number(x.id)===Number(id));
+  if(!p)return;
+  $("paymentTransferId").value=p.id;
+  $("paymentTransferTitle").textContent=`${p.title}｜${money(p.amount)}`;
+  $("paymentTransferDate").value=p.transfer_date||new Date().toISOString().slice(0,10);
+  $("paymentTransferLast5").value=p.transfer_account_last5||"";
+  paymentTransferDialog.showModal();
+  setTimeout(()=>$("paymentTransferLast5").focus(),50);
+};
+
+$("closePaymentTransferDialog").onclick=()=>paymentTransferDialog.close();
+$("cancelPaymentTransfer").onclick=()=>paymentTransferDialog.close();
+$("paymentTransferLast5").addEventListener("input",e=>{
+  e.target.value=e.target.value.replace(/\D/g,"").slice(0,5);
+});
+$("paymentTransferForm").onsubmit=async e=>{
+  e.preventDefault();
+  const id=Number($("paymentTransferId").value);
+  const transfer_date=$("paymentTransferDate").value;
+  const account_last5=$("paymentTransferLast5").value.trim();
+  if(!transfer_date){toast("請選擇轉帳日期");return;}
+  if(!/^\d{5}$/.test(account_last5)){toast("帳號後五碼請輸入 5 位數字");return;}
+  try{
+    await api(`/api/payments/${id}/transfer`,{
+      method:"PUT",
+      body:JSON.stringify({transfer_date,account_last5})
+    });
+    paymentTransferDialog.close();
+    toast("匯款資料已送出，等待管理員確認");
+    await refresh();
+  }catch(err){
+    toast(err.message);
+  }
+};
+
 function escapeHtml(value){
   return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
 }

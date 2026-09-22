@@ -211,6 +211,27 @@
   </div>
 </dialog>
 
+<dialog id="paymentTransferDialog">
+  <form id="paymentTransferForm">
+    <input type="hidden" id="paymentTransferId">
+    <div class="dialogTitle">
+      <div><div class="eyebrow">繳費回報</div><h2>已匯款</h2></div>
+      <button type="button" id="closePaymentTransferDialog" class="iconBtn">✕</button>
+    </div>
+    <p class="muted" id="paymentTransferTitle"></p>
+    <label>轉帳日期
+      <input id="paymentTransferDate" type="date" required>
+    </label>
+    <label>帳號後五碼
+      <input id="paymentTransferLast5" type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="請輸入 5 位數字" required>
+    </label>
+    <div class="actions">
+      <button type="button" id="cancelPaymentTransfer" class="secondaryBtn">取消</button>
+      <button type="submit">送出匯款資料</button>
+    </div>
+  </form>
+</dialog>
+
 <div id="toast"></div>
 <script src="/static/app.js?v=20260910-1"></script>
 </body>

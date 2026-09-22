@@ -101,8 +101,13 @@ def init_db():
                 amount INTEGER NOT NULL,
                 due_date DATE,
                 status TEXT NOT NULL DEFAULT 'unpaid',
-                note TEXT DEFAULT ''
+                note TEXT DEFAULT '',
+                transfer_date DATE,
+                transfer_account_last5 TEXT DEFAULT ''
             );
+
+            ALTER TABLE payments ADD COLUMN IF NOT EXISTS transfer_date DATE;
+            ALTER TABLE payments ADD COLUMN IF NOT EXISTS transfer_account_last5 TEXT DEFAULT '';
 
             CREATE TABLE IF NOT EXISTS parent_content_seen (
                 parent_id BIGINT NOT NULL REFERENCES parents(id) ON DELETE CASCADE,
@@ -935,7 +940,8 @@ def player_payments(player_id: int, authorization: str | None = Header(default=N
                 raise HTTPException(403, "無權查看此球員")
 
             cur.execute("""
-                SELECT id,player_id,title,amount,due_date::text,status,note
+                SELECT id,player_id,title,amount,due_date::text,status,note,
+                       transfer_date::text,transfer_account_last5
                 FROM payments
                 WHERE player_id=%s
                 ORDER BY
@@ -1052,6 +1058,11 @@ class PaymentIn(BaseModel):
     due_date: str | None = None
     status: str = "unpaid"
     note: str = ""
+
+
+class PaymentTransferIn(BaseModel):
+    transfer_date: str
+    account_last5: str
 
 
 class PaymentBatchIn(BaseModel):
@@ -1495,6 +1506,52 @@ def admin_event_detail(event_id: int, authorization: str | None = Header(default
     return {"event":event,"players":players,"matches":matches}
 
 
+@app.put("/api/payments/{payment_id}/transfer")
+def parent_report_payment_transfer(
+    payment_id: int,
+    body: PaymentTransferIn,
+    authorization: str | None = Header(default=None),
+):
+    parent = current_parent(authorization)
+    transfer_date = (body.transfer_date or "").strip()
+    account_last5 = (body.account_last5 or "").strip()
+
+    if not transfer_date:
+        raise HTTPException(400, "請輸入轉帳日期")
+    if len(account_last5) != 5 or not account_last5.isdigit():
+        raise HTTPException(400, "帳號後五碼必須是 5 位數字")
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT pay.id,pay.status
+                FROM payments pay
+                JOIN parent_players pp ON pp.player_id=pay.player_id
+                WHERE pay.id=%s AND pp.parent_id=%s
+                LIMIT 1
+            """, (payment_id, parent["id"]))
+            payment = cur.fetchone()
+
+            if not payment:
+                raise HTTPException(404, "找不到繳費項目")
+            if payment["status"] == "paid":
+                raise HTTPException(400, "此筆繳費已確認完成")
+
+            cur.execute("""
+                UPDATE payments
+                SET status='pending',
+                    transfer_date=%s,
+                    transfer_account_last5=%s
+                WHERE id=%s
+                RETURNING id,player_id,title,amount,due_date::text,status,note,
+                          transfer_date::text,transfer_account_last5
+            """, (transfer_date, account_last5, payment_id))
+            row = cur.fetchone()
+        conn.commit()
+
+    return row
+
+
 # ---------------- Admin payments ----------------
 
 @app.get("/api/admin/payments")
@@ -1505,7 +1562,8 @@ def admin_payments(authorization: str | None = Header(default=None)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT pay.id,pay.player_id,p.name player_name,p.team,
-                       pay.title,pay.amount,pay.due_date::text,pay.status,pay.note
+                       pay.title,pay.amount,pay.due_date::text,pay.status,pay.note,
+                       pay.transfer_date::text,pay.transfer_account_last5
                 FROM payments pay
                 JOIN players p ON p.id=pay.player_id
                 ORDER BY
