@@ -5,13 +5,16 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import date
+import csv
+import io
+import zipfile
+from datetime import date, datetime
 
 import httpx
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1101,6 +1104,81 @@ class MessageSendIn(BaseModel):
 
 
 # ---------------- Admin dashboard ----------------
+
+@app.get("/api/admin/backup")
+def admin_backup(authorization: str | None = Header(default=None)):
+    """Download a full admin data backup as a ZIP of UTF-8 CSV files."""
+    require_admin(authorization)
+
+    tables = [
+        "parents",
+        "players",
+        "parent_players",
+        "events",
+        "event_matches",
+        "event_players",
+        "attendance",
+        "payments",
+        "announcements",
+        "volunteer_slots",
+        "volunteer_signups",
+        "notification_logs",
+        "message_logs",
+        "inbound_messages",
+        "parent_content_seen",
+    ]
+
+    output = io.BytesIO()
+    manifest = {
+        "created_at": datetime.now().astimezone().isoformat(),
+        "format": "CSV UTF-8 with BOM",
+        "tables": {},
+    }
+
+    with db() as conn:
+        with conn.cursor() as cur:
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+                for table in tables:
+                    cur.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema='public' AND table_name=%s) AS exists",
+                        (table,),
+                    )
+                    if not cur.fetchone()["exists"]:
+                        continue
+
+                    cur.execute(f'SELECT * FROM "{table}"')
+                    rows = cur.fetchall()
+                    columns = [desc.name for desc in cur.description]
+
+                    text = io.StringIO(newline="")
+                    writer = csv.DictWriter(text, fieldnames=columns, extrasaction="ignore")
+                    writer.writeheader()
+                    for row in rows:
+                        cooked = {}
+                        for key in columns:
+                            value = row.get(key)
+                            if isinstance(value, (dict, list)):
+                                value = json.dumps(value, ensure_ascii=False)
+                            elif value is None:
+                                value = ""
+                            cooked[key] = value
+                        writer.writerow(cooked)
+
+                    # BOM makes Traditional Chinese display correctly when opened in Excel.
+                    zf.writestr(f"{table}.csv", "\ufeff" + text.getvalue())
+                    manifest["tables"][table] = {"rows": len(rows), "columns": columns}
+
+                zf.writestr(
+                    "backup_manifest.json",
+                    json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
+                )
+
+    output.seek(0)
+    filename = f"team_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(output, media_type="application/zip", headers=headers)
+
 
 @app.get("/api/admin/dashboard")
 def admin_dashboard(authorization: str | None = Header(default=None)):

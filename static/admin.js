@@ -53,6 +53,31 @@ async function loadLineQuota(){
 
 $("refreshLineQuotaBtn")?.addEventListener("click",loadLineQuota);
 
+$("downloadBackupBtn")?.addEventListener("click",async()=>{
+  const btn=$("downloadBackupBtn");
+  const oldText=btn.textContent;
+  try{
+    btn.disabled=true;
+    btn.textContent="備份產生中...";
+    const r=await fetch("/api/admin/backup",{headers:{Authorization:`Bearer ${adminToken}`}});
+    if(!r.ok){
+      let msg="備份失敗";
+      try{msg=(await r.json()).detail||msg}catch{}
+      throw new Error(msg);
+    }
+    const blob=await r.blob();
+    const cd=r.headers.get("Content-Disposition")||"";
+    const match=cd.match(/filename="?([^";]+)"?/i);
+    const filename=match?.[1]||`team_backup_${new Date().toISOString().slice(0,10)}.zip`;
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    URL.revokeObjectURL(url);
+    toast("完整備份已下載");
+  }catch(e){toast(e.message)}
+  finally{btn.disabled=false;btn.textContent=oldText}
+});
+
 window.showPage=async p=>{document.querySelectorAll(".page").forEach(x=>x.classList.add("hidden"));$(p).classList.remove("hidden");document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.page===p));$("pageTitle").textContent=titles[p];if(p==="dashboard")await loadDashboard();if(p==="players")await loadPlayers();if(p==="parents")await loadParents();if(p==="events")await loadEvents();if(p==="payments")await loadPayments();if(p==="messages")await loadLineQuota();if(p==="messages")await loadMessages();if(p==="announcements")await loadAdminAnnouncements();};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>showPage(b.dataset.page));
 async function loadAll(){await Promise.all([loadPlayers(),loadParents(),loadEvents(),loadPayments(),loadDashboard()])}
