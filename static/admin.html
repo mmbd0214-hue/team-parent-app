@@ -266,6 +266,8 @@
 <dialog id="eventDialog"><form id="adminEventForm">
 <h2 id="eventDialogTitle">建立活動 / 比賽</h2><input type="hidden" id="editEventId">
 <label>名稱<input id="eventTitleInput" required></label>
+<label class="check"><input id="eventNoticeOnlyInput" type="checkbox"> 只公告、不調查出席</label>
+<p class="muted">勾選後活動仍會顯示在家長端，也可以發送 LINE 通知，但家長不需要回覆出席／請假。</p>
 <div class="grid2"><label>日期<input id="eventDateInput" type="date" required></label><label>回覆截止<input id="eventDeadlineInput" type="date"></label></div>
 <label>地點<input id="eventLocationInput" required></label>
 <div class="grid2"><label>集合時間<input id="eventMeetTimeInput" type="time"></label><label class="check timeTbd"><input id="eventMeetTimeTbdInput" type="checkbox"> 集合時間未定</label></div>

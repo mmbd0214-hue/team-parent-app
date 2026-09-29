@@ -499,7 +499,10 @@ function renderEvents(){
     }
     const meet=ev.meet_time_tbd?"未定":(ev.meet_time||"未定");
     const matches=(ev.matches||[]).map((m,i)=>`<div class="matchLine"><strong>第${i+1}場</strong>　${m.game_time_tbd?"未定":(m.game_time||"未定")}　🆚 ${m.opponent||"未定"}</div>`).join("");
-    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div><span class="status ${a?'paid':'unpaid'}">${ans}</span></div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}<div class="eventActionRow"><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button><button class="secondaryBtn" onclick="openAttendanceList(${ev.id})">查看出席名單</button></div></div>`
+    const noticeOnly=ev.survey_enabled===false;
+    const statusHtml=noticeOnly?'<span class="status paid">📢 公告</span>':`<span class="status ${a?'paid':'unpaid'}">${ans}</span>`;
+    const actions=noticeOnly?"":`<div class="eventActionRow"><button onclick="openEvent(${ev.id})">${a?"修改登記":"立即回覆"}</button><button class="secondaryBtn" onclick="openAttendanceList(${ev.id})">查看出席名單</button></div>`;
+    return `<div class="card eventCard"><div class="top"><div><div>${ev.event_date}</div><h4>${ev.title}</h4></div>${statusHtml}</div><div class="meta">📍 ${ev.location}</div><div class="meta">🕗 集合：${meet}</div>${matches?`<div class="matchList">${matches}</div>`:""}${actions}</div>`
   }).join("")||`<div class="card muted">目前沒有活動</div>`
 }
 function paymentStatusText(p){

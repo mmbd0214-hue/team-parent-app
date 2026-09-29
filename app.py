@@ -136,6 +136,7 @@ def init_db():
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT 'practice'")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS response_deadline DATE")
             cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS meal_enabled BOOLEAN NOT NULL DEFAULT TRUE")
+            cur.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS survey_enabled BOOLEAN NOT NULL DEFAULT TRUE")
 
             cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS practice_duration TEXT DEFAULT 'full'")
             cur.execute("ALTER TABLE attendance ADD COLUMN IF NOT EXISTS attendance_note TEXT DEFAULT ''")
@@ -762,7 +763,7 @@ def parent_events(authorization: str | None = Header(default=None)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT e.id,e.title,e.event_date,e.location,e.meal_price,
-                       e.status,e.event_type,e.response_deadline,e.meet_time,e.meet_time_tbd
+                       e.status,e.event_type,e.survey_enabled,e.response_deadline,e.meet_time,e.meet_time_tbd
                 FROM events e
                 WHERE e.id IN (
                     SELECT ep.event_id
@@ -856,6 +857,14 @@ class AttendanceIn(BaseModel):
 @app.put("/api/events/{event_id}/attendance")
 def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None = Header(default=None)):
     p = current_parent(authorization)
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT survey_enabled FROM events WHERE id=%s", (event_id,))
+            event_mode = cur.fetchone()
+            if not event_mode:
+                raise HTTPException(404, "找不到活動")
+            if not event_mode.get("survey_enabled", True):
+                raise HTTPException(400, "此活動為純公告，不開放出席回覆")
 
     if body.attendance_status not in ("attend", "leave", "maybe"):
         raise HTTPException(400, "attendance_status 錯誤")
@@ -1044,6 +1053,7 @@ class EventIn(BaseModel):
     meal_enabled: bool = True
     meal_price: int = 0
     event_type: str = "practice"
+    survey_enabled: bool = True
     response_deadline: str | None = None
     meet_time: str | None = None
     meet_time_tbd: bool = False
@@ -1502,7 +1512,7 @@ def admin_events(authorization: str | None = Header(default=None)):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT e.id,e.title,e.event_date::text,e.location,e.meal_price,e.meal_enabled,e.status,e.event_type,
-                       e.response_deadline::text,e.meet_time,e.meet_time_tbd,
+                       e.response_deadline::text,e.meet_time,e.meet_time_tbd,e.survey_enabled,
                        COUNT(ep.player_id) invited,COUNT(a.id) replied,
                        COALESCE(SUM(CASE WHEN a.attendance_status='attend' THEN 1 ELSE 0 END),0) attend,
                        COALESCE(SUM(CASE WHEN a.attendance_status='leave' THEN 1 ELSE 0 END),0) leave,
@@ -1527,9 +1537,10 @@ def create_event(body: EventIn, authorization: str | None = Header(default=None)
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO events(title,event_date,location,meal_enabled,meal_price,event_type,response_deadline,meet_time,meet_time_tbd)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
-            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_enabled,body.meal_price,body.event_type,body.response_deadline or None,
+                INSERT INTO events(title,event_date,location,meal_enabled,meal_price,event_type,survey_enabled,response_deadline,meet_time,meet_time_tbd)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *
+            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_enabled,body.meal_price,body.event_type,body.survey_enabled,
+                  (body.response_deadline or None) if body.survey_enabled else None,
                   None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd))
             event=cur.fetchone()
             if body.player_ids:
@@ -1547,9 +1558,10 @@ def update_event(event_id: int, body: EventUpdateIn, authorization: str | None =
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                UPDATE events SET title=%s,event_date=%s,location=%s,meal_enabled=%s,meal_price=%s,event_type=%s,response_deadline=%s,status=%s,meet_time=%s,meet_time_tbd=%s
+                UPDATE events SET title=%s,event_date=%s,location=%s,meal_enabled=%s,meal_price=%s,event_type=%s,survey_enabled=%s,response_deadline=%s,status=%s,meet_time=%s,meet_time_tbd=%s
                 WHERE id=%s RETURNING *
-            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_enabled,body.meal_price,body.event_type,body.response_deadline or None,body.status,
+            """,(body.title.strip(),body.event_date,body.location.strip(),body.meal_enabled,body.meal_price,body.event_type,body.survey_enabled,
+                  (body.response_deadline or None) if body.survey_enabled else None,body.status,
                   None if body.meet_time_tbd else (body.meet_time or None),body.meet_time_tbd,event_id))
             event=cur.fetchone()
             if not event: raise HTTPException(404,"找不到活動")
@@ -1569,7 +1581,7 @@ def admin_event_detail(event_id: int, authorization: str | None = Header(default
     require_admin(authorization)
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id,title,event_date::text,location,meal_enabled,meal_price,status,event_type,response_deadline::text,meet_time,meet_time_tbd FROM events WHERE id=%s",(event_id,))
+            cur.execute("SELECT id,title,event_date::text,location,meal_enabled,meal_price,status,event_type,survey_enabled,response_deadline::text,meet_time,meet_time_tbd FROM events WHERE id=%s",(event_id,))
             event=cur.fetchone()
             if not event: raise HTTPException(404,"找不到活動")
             event["meet_time"]=normalize_time_value(event.get("meet_time"))
