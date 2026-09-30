@@ -49,7 +49,7 @@
 </section>
 
 <section id="payments" class="page hidden">
-  <div class="toolbar"><h2>繳費管理</h2><button onclick="openPayment()">＋ 新增收費</button></div>
+  <div class="toolbar"><h2>繳費管理</h2><div class="rowActions"><button class="ghost" onclick="exportAllPayments()">⬇️ 匯出 Excel</button><button onclick="openPayment()">＋ 新增收費</button></div></div><p class="muted">先依繳費項目查看統計，點選項目後再查看每位球員的繳費明細。</p>
   <div id="paymentTable"></div>
 </section>
 
@@ -296,6 +296,12 @@
 <h3>球員回覆明細</h3><div id="eventDetailBody"></div>
 <h3>最近通知紀錄</h3><div id="notifyLogs"></div>
 </div></dialog>
+
+<dialog id="paymentDetailDialog"><div class="dialogBody">
+<div class="toolbar"><div><div class="eyebrow">繳費項目</div><h2 id="paymentDetailTitle">繳費明細</h2></div><button type="button" class="ghost" onclick="paymentDetailDialog.close()">關閉</button></div>
+<div id="paymentDetailSummary" class="stats compact"></div>
+<div class="toolbar"><div></div><button id="exportPaymentGroupBtn" type="button" class="ghost">⬇️ 匯出此項 Excel</button></div>
+<div id="paymentDetailTable"></div></div></dialog>
 
 <dialog id="paymentDialog"><form id="paymentForm">
 <h2>新增收費</h2>

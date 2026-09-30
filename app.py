@@ -15,6 +15,10 @@ import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
+from io import BytesIO
+from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1652,6 +1656,44 @@ def parent_report_payment_transfer(
 
 
 # ---------------- Admin payments ----------------
+
+@app.get("/api/admin/payments/export.xlsx")
+def export_payments_excel(title: str | None = Query(default=None), amount: int | None = Query(default=None),
+    due_date: str | None = Query(default=None), note: str | None = Query(default=None),
+    authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    conditions, params = [], []
+    if title is not None: conditions.append("pay.title=%s"); params.append(title)
+    if amount is not None: conditions.append("pay.amount=%s"); params.append(amount)
+    if due_date is not None:
+        if due_date == "": conditions.append("pay.due_date IS NULL")
+        else: conditions.append("pay.due_date=%s"); params.append(due_date)
+    if note is not None: conditions.append("COALESCE(pay.note,'')=%s"); params.append(note)
+    where_sql=(" WHERE "+" AND ".join(conditions)) if conditions else ""
+    with db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"""SELECT p.name player_name,p.team,pay.title,pay.amount,pay.due_date::text,pay.status,
+                pay.note,pay.payment_method,pay.transfer_date::text,pay.transfer_account_last5
+                FROM payments pay JOIN players p ON p.id=pay.player_id {where_sql}
+                ORDER BY pay.title,pay.due_date NULLS LAST,p.team,p.name""",tuple(params))
+            rows=cur.fetchall()
+    wb=Workbook(); ws=wb.active; ws.title="繳費明細"
+    ws.append(["繳費項目","球員","組別","金額","繳費期限","狀態","繳費方式","繳交/轉帳日期","帳號後五碼","備註"])
+    for c in ws[1]: c.font=Font(bold=True); c.alignment=Alignment(horizontal="center")
+    st={"paid":"已繳","pending":"待確認","unpaid":"未繳"}; mt={"cash":"現場繳交","transfer":"轉帳匯款"}
+    for r in rows:
+        ws.append([r["title"],r["player_name"],r["team"],r["amount"],r["due_date"] or "",st.get(r["status"],r["status"]),
+            mt.get(r["payment_method"],""),r["transfer_date"] or "",
+            r["transfer_account_last5"] if r["payment_method"]=="transfer" else "",r["note"] or ""])
+    for i,w in enumerate([24,14,10,12,14,12,14,18,14,30],1): ws.column_dimensions[chr(64+i)].width=w
+    ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
+    bio=BytesIO(); wb.save(bio); bio.seek(0)
+    filename="payments.xlsx" if title is None else f"{title}_繳費明細.xlsx"
+    return StreamingResponse(bio,media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":f"attachment; filename=payments.xlsx; filename*=UTF-8''{quote(filename)}"})
+
+
+
 
 @app.get("/api/admin/payments")
 def admin_payments(authorization: str | None = Header(default=None)):
