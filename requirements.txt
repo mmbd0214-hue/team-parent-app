@@ -3,3 +3,4 @@ uvicorn[standard]==0.35.0
 httpx==0.28.1
 psycopg[binary]==3.2.10
 openpyxl>=3.1,<4
+PyJWT[crypto]>=2.10,<3

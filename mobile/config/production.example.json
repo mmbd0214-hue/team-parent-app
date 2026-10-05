@@ -1,0 +1,7 @@
+{
+  "APP_ENV": "production",
+  "API_BASE_URL": "https://YOUR-PRODUCTION-HOST",
+  "LINE_CHANNEL_ID": "YOUR-LINE-LOGIN-CHANNEL-ID",
+  "ALLOW_MOCK_LOGIN": "false",
+  "ENABLE_APPLE_LOGIN": "false"
+}

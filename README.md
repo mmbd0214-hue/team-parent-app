@@ -1,5 +1,9 @@
 # 球隊家長 App 完整版
 
+## Flutter 手機版
+
+Android／iOS 原始碼位於 [mobile](mobile/README.md)。後端已加入安全 session、版本衝突檢查與原生 API，部署前必須先閱讀手機版 README 並執行明確的 migration。下列內容為既有 Web 功能說明；舊字串 token 已不再有效。
+
 整合功能：
 - LINE Login / LIFF
 - 首次登入自動取得 LINE User ID

@@ -1,0 +1,32 @@
+name: team_parent
+description: 青山社區棒球隊家長手機 App
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: '>=3.8.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  http: ^1.4.0
+  flutter_secure_storage: ^10.0.0
+  flutter_line_sdk:
+    path: packages/flutter_line_sdk
+  app_links: ^6.4.1
+  url_launcher: ^6.3.2
+  sign_in_with_apple: ^7.0.1
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  integration_test:
+    sdk: flutter
+flutter:
+  uses-material-design: true
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: '../static/icons/icon-512.png'
+  remove_alpha_ios: true

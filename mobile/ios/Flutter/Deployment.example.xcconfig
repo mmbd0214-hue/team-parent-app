@@ -1,0 +1,2 @@
+// Copy to Deployment.local.xcconfig and set your actual HTTPS backend host.
+APP_LINK_HOST = YOUR-PRODUCTION-HOST

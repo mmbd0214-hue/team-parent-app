@@ -1,11 +1,19 @@
 
-let adminToken=sessionStorage.getItem("adminToken")||"",cache={players:[],parents:[],events:[],payments:[]},currentEventId=null;
+let adminToken="",csrfToken="",cache={players:[],parents:[],events:[],payments:[]},currentEventId=null;
 const $=id=>document.getElementById(id),fmtMoney=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
-async function api(path,options={}){options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(adminToken)options.headers.Authorization=`Bearer ${adminToken}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{};if(r.status===401){sessionStorage.removeItem("adminToken");adminToken="";showLogin()}throw new Error(m)}return r.json()}
+async function api(path,options={}){
+  options.headers={...(options.headers||{}),"Content-Type":"application/json"};
+  if(csrfToken)options.headers["X-CSRF-Token"]=csrfToken;
+  options.credentials="same-origin";options.cache="no-store";
+  const r=await fetch(path,options),data=await r.json();
+  if(!r.ok){if(r.status===401){csrfToken="";showLogin()}
+    throw new Error(typeof data.detail==="string"?data.detail:"操作失敗，請重新整理後重試")}
+  return data;
+}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),2200)}
 function showLogin(){$("loginBox").classList.remove("hidden");$("adminApp").classList.add("hidden")}function showAdmin(){$("loginBox").classList.add("hidden");$("adminApp").classList.remove("hidden")}
-$("loginBtn").onclick=async()=>{try{const r=await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:$("adminPassword").value})});adminToken=r.token;sessionStorage.setItem("adminToken",adminToken);showAdmin();await loadAll()}catch(e){$("loginError").textContent=e.message}};
-$("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("loginBtn").click()});$("logoutBtn").onclick=()=>{sessionStorage.clear();adminToken="";showLogin()};
+$("loginBtn").onclick=async()=>{try{const r=await api("/api/admin/login",{method:"POST",body:JSON.stringify({password:$("adminPassword").value})});csrfToken=r.csrf_token;showAdmin();await loadAll()}catch(e){$("loginError").textContent=e.message}};
+$("adminPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("loginBtn").click()});$("logoutBtn").onclick=async()=>{try{await api("/api/auth/logout",{method:"POST"})}finally{csrfToken="";sessionStorage.removeItem("adminToken");showLogin()}};
 const titles={dashboard:"總覽",players:"球員管理",parents:"家長管理",events:"活動 / 比賽",payments:"繳費管理",messages:"LINE 訊息中心",announcements:"公告管理",volunteers:"義工排班"};
 
 async function loadLineQuota(){
@@ -59,7 +67,7 @@ $("downloadBackupBtn")?.addEventListener("click",async()=>{
   try{
     btn.disabled=true;
     btn.textContent="備份產生中...";
-    const r=await fetch("/api/admin/backup",{headers:{Authorization:`Bearer ${adminToken}`}});
+    const r=await fetch("/api/admin/backup",{credentials:"same-origin"});
     if(!r.ok){
       let msg="備份失敗";
       try{msg=(await r.json()).detail||msg}catch{}
@@ -231,7 +239,7 @@ window.openPaymentGroup=key=>{const rows=cache.payments.filter(p=>paymentGroupKe
  $("paymentDetailTitle").textContent=p.title;$("paymentDetailSummary").innerHTML=[["金額",fmtMoney(p.amount)],["期限",p.due_date||"-"],["已繳",a],["待確認",b],["未繳",c]].map(x=>`<div class="stat"><div class="l">${x[0]}</div><div class="k">${x[1]}</div></div>`).join("");
  $("paymentDetailTable").innerHTML=`<div class="tableWrap"><table><thead><tr><th>球員</th><th>組別</th><th>繳費方式</th><th>繳交/轉帳日期</th><th>帳號後五碼</th><th>狀態</th><th>操作</th></tr></thead><tbody>${rows.map(x=>`<tr><td><strong>${escapeHtml(x.player_name)}</strong></td><td>${escapeHtml(x.team||"")}</td><td>${paymentMethodText(x.payment_method)}</td><td>${x.transfer_date||"-"}</td><td>${x.payment_method==="transfer"?(x.transfer_account_last5||"-"):"-"}</td><td><span class="tag ${x.status==="paid"?"green":x.status==="pending"?"amber":"red"}">${paymentStatusText(x.status)}</span></td><td><div class="rowActions"><button onclick="setPayment(${x.id},'paid')">已繳</button><button onclick="setPayment(${x.id},'pending')">待確認</button><button onclick="setPayment(${x.id},'unpaid')">未繳</button><button onclick="deletePayment(${x.id})">刪除</button></div></td></tr>`).join("")}</tbody></table></div>`;
  $("exportPaymentGroupBtn").onclick=()=>exportPaymentsExcel(p);paymentDetailDialog.showModal()};
-async function downloadAdminFile(url,name){const r=await fetch(url,{headers:{"Authorization":`Bearer ${adminToken}`}});if(!r.ok){let m="匯出失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}const b=await r.blob(),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+async function downloadAdminFile(url,name){const r=await fetch(url,{credentials:"same-origin"});if(!r.ok){let m="匯出失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}const b=await r.blob(),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
 window.exportAllPayments=async()=>{try{await downloadAdminFile("/api/admin/payments/export.xlsx","繳費明細.xlsx")}catch(e){toast(e.message)}};
 window.exportPaymentsExcel=async p=>{const q=new URLSearchParams({title:p.title,amount:String(p.amount),due_date:p.due_date||"",note:p.note||""});try{await downloadAdminFile(`/api/admin/payments/export.xlsx?${q}`,"繳費明細.xlsx")}catch(e){toast(e.message)}};
 
@@ -299,7 +307,7 @@ $("paymentForm").onsubmit=async e=>{
     toast(e.message);
   }
 };
-window.setPayment=async(id,status)=>{try{await api(`/api/admin/payments/${id}/status?status=${status}`,{method:"PUT"});toast("狀態已更新");await Promise.all([loadPayments(),loadDashboard()])}catch(e){toast(e.message)}};
+window.setPayment=async(id,status)=>{try{await api(`/api/admin/payments/${id}/status?status=${status}&expected_version=${cache.payments.find(p=>Number(p.id)===Number(id))?.version}&reason=${encodeURIComponent(status!=="paid"?(prompt("若修正已繳資料，請輸入原因")||""):"")}`,{method:"PUT"});toast("狀態已更新");await Promise.all([loadPayments(),loadDashboard()])}catch(e){toast(e.message)}};
 
 
 window.deletePayment = async (id) => {
@@ -321,7 +329,7 @@ window.deletePayment = async (id) => {
   if (!confirm(msg)) return;
 
   try {
-    await api(`/api/admin/payments/${id}`, {
+    await api(`/api/admin/payments/${id}?expected_version=${p.version}&reason=${encodeURIComponent(p.status==='paid'?(prompt('刪除已繳資料，請輸入原因')||''):'')}`, {
       method: "DELETE"
     });
 
@@ -822,24 +830,7 @@ if(embeddedAdmin){
   document.body.classList.add("embeddedAdmin");
 }
 
-window.addEventListener("message",async event=>{
-  if(event.origin!==location.origin)return;
-  if(event.data?.type!=="TEAM_PARENT_ADMIN_AUTH")return;
-  if(!event.data?.token?.startsWith("parent-admin:"))return;
-
-  adminToken=event.data.token;
-  sessionStorage.setItem("adminToken",adminToken);
-
-  try{
-    showAdmin();
-    await loadAll();
-  }catch(e){
-    console.error("Integrated admin load failed:",e);
-    showLogin();
-  }
-});
-
-if(adminToken){showAdmin();loadAll().catch(()=>showLogin())}else showLogin();
+sessionStorage.removeItem("adminToken");api("/api/admin/session").then(r=>{csrfToken=r.csrf_token;showAdmin();return loadAll()}).catch(()=>showLogin());
 
 // === DELETE helpers to add into static/admin.js ===
 

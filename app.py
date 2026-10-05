@@ -8,24 +8,30 @@ import json
 import csv
 import io
 import zipfile
+import uuid
 from datetime import date, datetime
+from typing import Annotated, Literal
 
 import httpx
 import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 from io import BytesIO
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
+from session_security import authenticate, issue_session, token_hash
+from mobile_api import register_mobile_api, taipei_today, validate_report, require_linked_player
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 MOCK_LOGIN = os.getenv("MOCK_LOGIN", "0") == "1"
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-me-now")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+LINE_LOGIN_CHANNEL_ID = os.getenv("LINE_LOGIN_CHANNEL_ID", "").strip()
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "").strip()
 LINE_LIFF_ID = os.getenv("LINE_LIFF_ID", "").strip()
@@ -47,6 +53,47 @@ async def disable_frontend_cache(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+
+@app.middleware("http")
+async def session_guard(request: Request, call_next):
+    request_id = uuid.uuid4().hex
+    try:
+        path = request.url.path
+        sensitive = path in {"/api/auth/line", "/api/auth/refresh", "/api/auth/apple", "/api/auth/apple/challenge", "/api/admin/login",
+                             "/api/bind/preview", "/api/bind/confirm", "/auth/web-handoff"}
+        if sensitive:
+            # Shared PostgreSQL bucket: works across processes; never trusts X-Forwarded-For.
+            bucket = token_hash((request.client.host if request.client else "unknown") + ":" + path)
+            with db() as conn, conn.cursor() as cur:
+                cur.execute("""INSERT INTO api_rate_limits(bucket,window_start) VALUES(%s,NOW())
+                    ON CONFLICT(bucket) DO UPDATE SET requests=CASE WHEN api_rate_limits.window_start<NOW()-INTERVAL '1 minute'
+                    THEN 1 ELSE api_rate_limits.requests+1 END, window_start=CASE WHEN api_rate_limits.window_start<NOW()-INTERVAL '1 minute'
+                    THEN NOW() ELSE api_rate_limits.window_start END RETURNING requests""", (bucket,))
+                if cur.fetchone()["requests"] > 30:
+                    return JSONResponse({"detail": "請稍後再試", "request_id": request_id}, 429,
+                                        headers={"Retry-After": "60"})
+        cookie = request.cookies.get("team_admin")
+        if cookie and not request.headers.get("authorization") and (path.startswith("/api/admin/") or path == "/api/auth/logout") and path != "/api/admin/login":
+            session = authenticate(db, "Bearer " + cookie, admin=True)
+            if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                if not secrets.compare_digest(request.headers.get("x-csrf-token", ""), session["csrf_token"]):
+                    raise HTTPException(403, "請重新載入管理頁面")
+            request.scope["headers"] = list(request.scope["headers"]) + [(b"authorization", ("Bearer " + cookie).encode())]
+        response = await call_next(request)
+    except HTTPException as exc:
+        response = JSONResponse({"detail": exc.detail, "request_id": request_id}, exc.status_code)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    if path.startswith("/api/") or path == "/auth/web-handoff":
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request, exc):
+    return JSONResponse({"detail": "請檢查輸入欄位", "field_errors": [
+        {"field": ".".join(str(v) for v in e["loc"]), "message": e["msg"]} for e in exc.errors()]}, 422)
 
 
 def db():
@@ -402,7 +449,13 @@ def init_db():
 
 @app.on_event("startup")
 def startup():
-    init_db()
+    if MOCK_LOGIN and os.getenv("APP_ENV", "production") != "development":
+        raise RuntimeError("MOCK_LOGIN 僅可用於 APP_ENV=development")
+    # Database changes are an explicit release step, never a startup side effect.
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM schema_migrations WHERE version='001_mobile'")
+        if not cur.fetchone():
+            raise RuntimeError("請先執行 scripts/migrate.py")
 
 
 @app.get("/")
@@ -463,6 +516,12 @@ async def auth_line(payload: LineAuth):
             raise HTTPException(401, "缺少 LINE access token")
 
         async with httpx.AsyncClient(timeout=10) as client:
+            if not LINE_LOGIN_CHANNEL_ID:
+                raise HTTPException(503, "LINE_LOGIN_CHANNEL_ID 尚未設定")
+            verified = await client.get("https://api.line.me/oauth2/v2.1/verify",
+                                        params={"access_token": payload.access_token})
+            if verified.status_code != 200 or str(verified.json().get("client_id")) != LINE_LOGIN_CHANNEL_ID or verified.json().get("expires_in", 0) <= 0:
+                raise HTTPException(401, "LINE 登入驗證失敗")
             r = await client.get(
                 "https://api.line.me/v2/profile",
                 headers={"Authorization": f"Bearer {payload.access_token}"}
@@ -508,28 +567,17 @@ async def auth_line(payload: LineAuth):
 
         conn.commit()
 
-    return {"token": f"parent:{row['id']}", "parent": row}
+    return {**issue_session(db, row["id"]), "parent": row}
 
 
 def current_parent(authorization):
-    if not authorization or not authorization.startswith("Bearer parent:"):
-        raise HTTPException(401, "尚未登入")
-    try:
-        pid = int(authorization.split(":")[-1])
-    except Exception:
-        raise HTTPException(401, "登入資訊錯誤")
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM parents WHERE id=%s", (pid,))
-            row = cur.fetchone()
-
-    if not row:
+    session = authenticate(db, authorization, parent_only=True)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM parents WHERE id=%s AND deleted_at IS NULL", (session["parent_id"],))
+        parent = cur.fetchone()
+    if not parent:
         raise HTTPException(401, "家長不存在")
-
-    return row
-
-
+    return parent
 
 @app.get("/api/content-seen")
 def get_content_seen(authorization: str | None = Header(default=None)):
@@ -561,16 +609,20 @@ def set_content_seen(body: ContentSeenIn, authorization: str | None = Header(def
                 ON CONFLICT(parent_id,kind,scope) DO UPDATE SET
                     last_seen_id=GREATEST(parent_content_seen.last_seen_id,EXCLUDED.last_seen_id),
                     updated_at=NOW()
+                RETURNING last_seen_id
                 """,
                 (parent["id"], kind, scope, last_seen_id),
             )
+            last_seen_id = cur.fetchone()["last_seen_id"]
         conn.commit()
     return {"ok": True, "last_seen_id": last_seen_id}
 
 
 @app.get("/api/announcements")
 def parent_announcements(
-    authorization: str | None = Header(default=None)
+    authorization: str | None = Header(default=None),
+    cursor: int | None = Query(default=None, ge=1),
+    limit: int | None = Query(default=None, ge=1, le=300),
 ):
     """Return only active rows from announcements.
 
@@ -594,9 +646,15 @@ def parent_announcements(
                 SELECT id,title,message_text,target_type,target_values,created_at
                 FROM announcements
                 WHERE active=TRUE
-                ORDER BY created_at DESC,id DESC
-                LIMIT 300
-            """)
+                  AND (target_type='all'
+                       OR (target_type='team' AND EXISTS(
+                         SELECT 1 FROM jsonb_array_elements_text(target_values) AS t(value) WHERE t.value=ANY(%s)))
+                       OR (target_type='parent' AND EXISTS(
+                         SELECT 1 FROM jsonb_array_elements_text(target_values) AS t(value) WHERE t.value=%s)))
+                  AND (%s::bigint IS NULL OR id<%s)
+                ORDER BY id DESC
+                LIMIT %s
+            """, (list(teams), str(parent["id"]), cursor, cursor, (limit or 300)+1))
             rows = cur.fetchall()
 
     result = []
@@ -627,13 +685,16 @@ def parent_announcements(
             "source": "announcement",
         })
 
-    return result
+    if limit is not None or cursor is not None:
+        size = limit or 100
+        return {"items": result[:size], "next_cursor": result[size-1]["id"] if len(result)>size else None}
+    return result[:300]
 
 
 # ---------------- Parent self binding ----------------
 
 class BindCodeIn(BaseModel):
-    code: str
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[A-Za-z0-9]{6}$")
 
 
 @app.post("/api/bind/preview")
@@ -727,7 +788,7 @@ def me(authorization: str | None = Header(default=None)):
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT pl.*
+                SELECT pl.id,pl.name,pl.team,pl.number,pl.active
                 FROM players pl
                 JOIN parent_players pp ON pp.player_id=pl.id
                 WHERE pp.parent_id=%s AND pl.active=TRUE
@@ -744,25 +805,16 @@ def me(authorization: str | None = Header(default=None)):
 
 
 @app.get("/api/me/admin-session")
-def parent_admin_session(
-    authorization: str | None = Header(default=None)
-):
-    parent = current_parent(authorization)
-
-    if not parent.get("is_admin", False):
-        raise HTTPException(403, "此 LINE 帳號沒有管理員權限")
-
-    return {
-        "ok": True,
-        "token": f"parent-admin:{parent['id']}",
-        "parent_id": parent["id"],
-        "display_name": parent["display_name"],
-    }
-
+def parent_admin_session(authorization: str | None = Header(default=None)):
+    # Retained only as an opaque bearer compatibility endpoint for older Web UI.
+    authenticate(db, authorization, parent_only=True, admin=True)
+    return {"ok": True, "token": authorization[7:]}
 
 @app.get("/api/events")
-def parent_events(authorization: str | None = Header(default=None)):
+def parent_events(player_id: int | None = Query(default=None), authorization: str | None = Header(default=None)):
     p = current_parent(authorization)
+    if player_id is not None:
+        require_linked_player(db, p["id"], player_id)
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -776,8 +828,11 @@ def parent_events(authorization: str | None = Header(default=None)):
                     WHERE pp.parent_id=%s
                 )
                   AND e.event_date >= %s
+                  AND (%s::bigint IS NULL OR EXISTS(SELECT 1 FROM event_players ep2
+                      JOIN parent_players pp2 ON pp2.player_id=ep2.player_id JOIN players p2 ON p2.id=pp2.player_id
+                      WHERE ep2.event_id=e.id AND ep2.player_id=%s AND pp2.parent_id=%s AND p2.active=TRUE))
                 ORDER BY e.event_date,e.id
-            """, (p["id"], date.today()))
+            """, (p["id"], taipei_today(), player_id, player_id, p["id"]))
             rows = cur.fetchall()
             result=[]
             for row in rows:
@@ -833,6 +888,7 @@ def parent_event_attendance_summary(event_id: int, authorization: str | None = H
 @app.get("/api/players/{player_id}/attendance")
 def player_attendance(player_id: int, authorization: str | None = Header(default=None)):
     p = current_parent(authorization)
+    require_linked_player(db, p["id"], player_id)
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -854,97 +910,59 @@ class AttendanceIn(BaseModel):
     leave_reason: str = ""
     practice_duration: str = "full"
     attendance_note: str = ""
-    player_meals: int = 0
-    parent_meals: int = 0
+    player_meals: int | None = None
+    parent_meals: int | None = None
+    expected_version: int = Field(ge=0)
 
 
 @app.put("/api/events/{event_id}/attendance")
 def save_attendance(event_id: int, body: AttendanceIn, authorization: str | None = Header(default=None)):
-    p = current_parent(authorization)
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT survey_enabled FROM events WHERE id=%s", (event_id,))
-            event_mode = cur.fetchone()
-            if not event_mode:
-                raise HTTPException(404, "找不到活動")
-            if not event_mode.get("survey_enabled", True):
-                raise HTTPException(400, "此活動為純公告，不開放出席回覆")
-
-    if body.attendance_status not in ("attend", "leave", "maybe"):
-        raise HTTPException(400, "attendance_status 錯誤")
-
-    if body.player_meals < 0 or body.parent_meals < 0:
-        raise HTTPException(400, "餐點數量不可為負數")
-
-    if body.practice_duration not in ("full", "morning_leave", "afternoon_leave", "half"):
-        # "half" is kept only for compatibility with existing records.
-        raise HTTPException(400, "practice_duration 錯誤")
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT 1 FROM parent_players
-                WHERE parent_id=%s AND player_id=%s
-            """, (p["id"], body.player_id))
-
-            if not cur.fetchone():
-                raise HTTPException(403, "無權修改此球員")
-
-            cur.execute("""
-                SELECT 1 FROM event_players
-                WHERE event_id=%s AND player_id=%s
-            """, (event_id, body.player_id))
-
-            if not cur.fetchone():
-                raise HTTPException(403, "此球員不在本活動名單")
-
-            cur.execute("""
-                SELECT meal_enabled
-                FROM events
-                WHERE id=%s AND status='open'
-                  AND (response_deadline IS NULL OR response_deadline >= %s)
-            """, (event_id, date.today()))
-
-            event_row = cur.fetchone()
-            if not event_row:
-                raise HTTPException(403, "活動已截止")
-
-            player_meals = body.player_meals if event_row["meal_enabled"] else 0
-            parent_meals = body.parent_meals if event_row["meal_enabled"] else 0
-
-            # 出席使用備註、請假使用請假原因；切換狀態時清除另一欄舊資料。
-            leave_reason = body.leave_reason.strip() if body.attendance_status == "leave" else ""
-            attendance_note = body.attendance_note.strip() if body.attendance_status == "attend" else ""
-
-            cur.execute("""
-                INSERT INTO attendance(
-                    event_id,player_id,attendance_status,
-                    leave_reason,practice_duration,attendance_note,
-                    player_meals,parent_meals
-                )
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT(event_id,player_id) DO UPDATE SET
-                    attendance_status=EXCLUDED.attendance_status,
-                    leave_reason=EXCLUDED.leave_reason,
-                    practice_duration=EXCLUDED.practice_duration,
-                    attendance_note=EXCLUDED.attendance_note,
-                    player_meals=EXCLUDED.player_meals,
-                    parent_meals=EXCLUDED.parent_meals
-            """, (
-                event_id,body.player_id,body.attendance_status,
-                leave_reason,body.practice_duration,
-                attendance_note,
-                player_meals,parent_meals
-            ))
-
-        conn.commit()
-
-    return {"ok": True}
-
+    parent = current_parent(authorization)
+    if body.attendance_status not in {"attend", "leave", "maybe"}:
+        raise HTTPException(422, "出席狀態錯誤")
+    if body.practice_duration not in {"full", "morning_leave", "afternoon_leave"}:
+        raise HTTPException(422, "請重新選擇出席時段")
+    if any(v is not None and v < 0 for v in [body.player_meals, body.parent_meals]):
+        raise HTTPException(422, "餐數不可為負")
+    with db() as conn, conn.cursor() as cur:
+        # Lock the event: serializes first attendance insertion as well as deadline changes.
+        cur.execute("SELECT * FROM events WHERE id=%s FOR UPDATE", (event_id,))
+        event = cur.fetchone()
+        if not event:
+            raise HTTPException(404, "找不到活動")
+        if not event["survey_enabled"] or event["status"] != "open" or (event["response_deadline"] and event["response_deadline"] < taipei_today()):
+            raise HTTPException(403, "活動不開放回覆或已截止")
+        cur.execute("""SELECT 1 FROM parent_players pp JOIN players p ON p.id=pp.player_id
+            JOIN event_players ep ON ep.player_id=p.id
+            WHERE pp.parent_id=%s AND p.id=%s AND ep.event_id=%s AND p.active=TRUE""",
+            (parent["id"], body.player_id, event_id))
+        if not cur.fetchone():
+            raise HTTPException(403, "此球員未受邀或未綁定")
+        cur.execute("SELECT * FROM attendance WHERE event_id=%s AND player_id=%s FOR UPDATE", (event_id, body.player_id))
+        old = cur.fetchone()
+        if body.expected_version != (old["version"] if old else 0):
+            raise HTTPException(409, "其他家長已更新，請重新載入後確認")
+        meals = [body.player_meals, body.parent_meals]
+        meals = [0 if not event["meal_enabled"] else v if v is not None else (old or {}).get(k, 0)
+                 for v, k in zip(meals, ["player_meals", "parent_meals"])]
+        duration = body.practice_duration if event["event_type"] == "practice" and body.attendance_status == "attend" else "full"
+        cur.execute("""INSERT INTO attendance(event_id,player_id,attendance_status,leave_reason,
+            practice_duration,attendance_note,player_meals,parent_meals,updated_by_parent_id)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT(event_id,player_id) DO UPDATE SET attendance_status=EXCLUDED.attendance_status,
+            leave_reason=EXCLUDED.leave_reason,practice_duration=EXCLUDED.practice_duration,
+            attendance_note=EXCLUDED.attendance_note,player_meals=EXCLUDED.player_meals,parent_meals=EXCLUDED.parent_meals,
+            version=attendance.version+1,updated_at=NOW(),updated_by_parent_id=EXCLUDED.updated_by_parent_id
+            RETURNING *""", (event_id, body.player_id, body.attendance_status,
+            body.leave_reason.strip()[:2000] if body.attendance_status == "leave" else "", duration,
+            body.attendance_note.strip()[:2000] if body.attendance_status == "attend" else "", *meals, parent["id"]))
+        result = cur.fetchone()
+    return {"ok": True, "attendance": result}
 
 @app.get("/api/players/{player_id}/payments")
 def player_payments(player_id: int, authorization: str | None = Header(default=None)):
     p = current_parent(authorization)
+    require_linked_player(db, p["id"], player_id)
 
     with db() as conn:
         with conn.cursor() as cur:
@@ -958,7 +976,7 @@ def player_payments(player_id: int, authorization: str | None = Header(default=N
 
             cur.execute("""
                 SELECT id,player_id,title,amount,due_date::text,status,note,
-                       transfer_date::text,transfer_account_last5,payment_method
+                       transfer_date::text,transfer_account_last5,payment_method,version
                 FROM payments
                 WHERE player_id=%s
                 ORDER BY
@@ -968,7 +986,7 @@ def player_payments(player_id: int, authorization: str | None = Header(default=N
             return cur.fetchall()
 
 
-# ---------------- Volunteer ----------------\n\n@app.get("/api/volunteers")\ndef parent_volunteers(authorization: str | None = Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("""\n                SELECT vs.id,vs.volunteer_date::text,vs.group_name,vs.capacity,vs.note,vs.status,\n                       COUNT(vsg.id) signup_count,\n                       EXISTS(SELECT 1 FROM volunteer_signups x WHERE x.slot_id=vs.id AND x.parent_id=%s) signed_by_me\n                FROM volunteer_slots vs\n                LEFT JOIN volunteer_signups vsg ON vsg.slot_id=vs.id\n                WHERE vs.volunteer_date >= %s\n                GROUP BY vs.id\n                ORDER BY vs.volunteer_date,vs.group_name\n            """,(parent["id"],date.today()))\n            slots=cur.fetchall()\n            cur.execute("""\n                SELECT p.id,p.name,p.team,p.number\n                FROM players p JOIN parent_players pp ON pp.player_id=p.id\n                WHERE pp.parent_id=%s AND p.active=TRUE\n                ORDER BY p.team,p.name\n            """,(parent["id"],))\n            players=cur.fetchall()\n    return {"slots":slots,"players":players}\n\n\n@app.post("/api/volunteers/{slot_id}/signup")\ndef volunteer_signup(slot_id:int,body:VolunteerSignupIn,authorization:str|None=Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("SELECT * FROM volunteer_slots WHERE id=%s FOR UPDATE",(slot_id,))\n            slot=cur.fetchone()\n            if not slot: raise HTTPException(404,"找不到義工時段")\n            if slot["volunteer_date"] < date.today(): raise HTTPException(400,"此日期已過")\n            if slot["status"] != "open": raise HTTPException(400,"此義工時段已關閉")\n            if body.player_id is not None:\n                cur.execute("SELECT 1 FROM parent_players WHERE parent_id=%s AND player_id=%s",(parent["id"],body.player_id))\n                if not cur.fetchone(): raise HTTPException(403,"無權使用此球員資料")\n            cur.execute("SELECT 1 FROM volunteer_signups WHERE slot_id=%s AND parent_id=%s",(slot_id,parent["id"]))\n            if cur.fetchone(): raise HTTPException(409,"你已經登記此時段")\n            cur.execute("SELECT COUNT(*) n FROM volunteer_signups WHERE slot_id=%s",(slot_id,))\n            if cur.fetchone()["n"] >= slot["capacity"]: raise HTTPException(409,"此義工時段已額滿")\n            cur.execute("INSERT INTO volunteer_signups(slot_id,parent_id,player_id) VALUES(%s,%s,%s)",(slot_id,parent["id"],body.player_id))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.delete("/api/volunteers/{slot_id}/signup")\ndef cancel_volunteer_signup(slot_id:int,authorization:str|None=Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("DELETE FROM volunteer_signups WHERE slot_id=%s AND parent_id=%s",(slot_id,parent["id"]))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.get("/api/admin/volunteers")\ndef admin_volunteers(authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("""\n                SELECT vs.id,vs.volunteer_date::text,vs.group_name,vs.capacity,vs.note,vs.status,\n                       COUNT(vsg.id) signup_count,\n                       COALESCE(json_agg(json_build_object('parent_name',pa.display_name,'player_name',pl.name,'team',pl.team) ORDER BY pa.display_name)\n                         FILTER (WHERE vsg.id IS NOT NULL),'[]'::json) signups\n                FROM volunteer_slots vs\n                LEFT JOIN volunteer_signups vsg ON vsg.slot_id=vs.id\n                LEFT JOIN parents pa ON pa.id=vsg.parent_id\n                LEFT JOIN players pl ON pl.id=vsg.player_id\n                GROUP BY vs.id\n                ORDER BY vs.volunteer_date DESC,vs.group_name\n            """)\n            return cur.fetchall()\n\n\n@app.post("/api/admin/volunteers")\ndef create_volunteer_slots(body:VolunteerSlotIn,authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    groups=[g for g in body.groups if g in {"少棒","青少棒"}]\n    if not groups: raise HTTPException(400,"請至少選擇一個組別")\n    with db() as conn:\n        with conn.cursor() as cur:\n            for group in groups:\n                cur.execute("""\n                    INSERT INTO volunteer_slots(volunteer_date,group_name,capacity,note,status)\n                    VALUES(%s,%s,%s,%s,'open')\n                    ON CONFLICT(volunteer_date,group_name) DO UPDATE SET capacity=EXCLUDED.capacity,note=EXCLUDED.note\n                """,(body.volunteer_date,group,max(1,body.capacity),body.note.strip()))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.put("/api/admin/volunteers/{slot_id}/status")\ndef volunteer_status(slot_id:int,status:str=Query(...),authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    if status not in ("open","closed"): raise HTTPException(400,"status 錯誤")\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("UPDATE volunteer_slots SET status=%s WHERE id=%s RETURNING id",(status,slot_id))\n            row=cur.fetchone()\n        conn.commit()\n    if not row: raise HTTPException(404,"找不到義工時段")\n    return {"ok":True}\n\n\n@app.delete("/api/admin/volunteers/{slot_id}")\ndef delete_volunteer_slot(slot_id:int,authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("DELETE FROM volunteer_slots WHERE id=%s RETURNING id",(slot_id,))\n            row=cur.fetchone()\n        conn.commit()\n    if not row: raise HTTPException(404,"找不到義工時段")\n    return {"ok":True}\n\n\n# ---------------- Admin auth ----------------
+# ---------------- Volunteer ----------------\n\n@app.get("/api/volunteers")\ndef parent_volunteers(authorization: str | None = Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("""\n                SELECT vs.id,vs.volunteer_date::text,vs.group_name,vs.capacity,vs.note,vs.status,\n                       COUNT(vsg.id) signup_count,\n                       EXISTS(SELECT 1 FROM volunteer_signups x WHERE x.slot_id=vs.id AND x.parent_id=%s) signed_by_me\n                FROM volunteer_slots vs\n                LEFT JOIN volunteer_signups vsg ON vsg.slot_id=vs.id\n                WHERE vs.volunteer_date >= %s\n                GROUP BY vs.id\n                ORDER BY vs.volunteer_date,vs.group_name\n            """,(parent["id"],taipei_today()))\n            slots=cur.fetchall()\n            cur.execute("""\n                SELECT p.id,p.name,p.team,p.number\n                FROM players p JOIN parent_players pp ON pp.player_id=p.id\n                WHERE pp.parent_id=%s AND p.active=TRUE\n                ORDER BY p.team,p.name\n            """,(parent["id"],))\n            players=cur.fetchall()\n    return {"slots":slots,"players":players}\n\n\n@app.post("/api/volunteers/{slot_id}/signup")\ndef volunteer_signup(slot_id:int,body:VolunteerSignupIn,authorization:str|None=Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("SELECT * FROM volunteer_slots WHERE id=%s FOR UPDATE",(slot_id,))\n            slot=cur.fetchone()\n            if not slot: raise HTTPException(404,"找不到義工時段")\n            if slot["volunteer_date"] < taipei_today(): raise HTTPException(400,"此日期已過")\n            if slot["status"] != "open": raise HTTPException(400,"此義工時段已關閉")\n            if body.player_id is not None:\n                cur.execute("SELECT 1 FROM parent_players WHERE parent_id=%s AND player_id=%s",(parent["id"],body.player_id))\n                if not cur.fetchone(): raise HTTPException(403,"無權使用此球員資料")\n            cur.execute("SELECT 1 FROM volunteer_signups WHERE slot_id=%s AND parent_id=%s",(slot_id,parent["id"]))\n            if cur.fetchone(): raise HTTPException(409,"你已經登記此時段")\n            cur.execute("SELECT COUNT(*) n FROM volunteer_signups WHERE slot_id=%s",(slot_id,))\n            if cur.fetchone()["n"] >= slot["capacity"]: raise HTTPException(409,"此義工時段已額滿")\n            cur.execute("INSERT INTO volunteer_signups(slot_id,parent_id,player_id) VALUES(%s,%s,%s)",(slot_id,parent["id"],body.player_id))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.delete("/api/volunteers/{slot_id}/signup")\ndef cancel_volunteer_signup(slot_id:int,authorization:str|None=Header(default=None)):\n    parent=current_parent(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("DELETE FROM volunteer_signups WHERE slot_id=%s AND parent_id=%s",(slot_id,parent["id"]))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.get("/api/admin/volunteers")\ndef admin_volunteers(authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("""\n                SELECT vs.id,vs.volunteer_date::text,vs.group_name,vs.capacity,vs.note,vs.status,\n                       COUNT(vsg.id) signup_count,\n                       COALESCE(json_agg(json_build_object('parent_name',pa.display_name,'player_name',pl.name,'team',pl.team) ORDER BY pa.display_name)\n                         FILTER (WHERE vsg.id IS NOT NULL),'[]'::json) signups\n                FROM volunteer_slots vs\n                LEFT JOIN volunteer_signups vsg ON vsg.slot_id=vs.id\n                LEFT JOIN parents pa ON pa.id=vsg.parent_id\n                LEFT JOIN players pl ON pl.id=vsg.player_id\n                GROUP BY vs.id\n                ORDER BY vs.volunteer_date DESC,vs.group_name\n            """)\n            return cur.fetchall()\n\n\n@app.post("/api/admin/volunteers")\ndef create_volunteer_slots(body:VolunteerSlotIn,authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    groups=[g for g in body.groups if g in {"少棒","青少棒"}]\n    if not groups: raise HTTPException(400,"請至少選擇一個組別")\n    with db() as conn:\n        with conn.cursor() as cur:\n            for group in groups:\n                cur.execute("""\n                    INSERT INTO volunteer_slots(volunteer_date,group_name,capacity,note,status)\n                    VALUES(%s,%s,%s,%s,'open')\n                    ON CONFLICT(volunteer_date,group_name) DO UPDATE SET capacity=EXCLUDED.capacity,note=EXCLUDED.note\n                """,(body.volunteer_date,group,max(1,body.capacity),body.note.strip()))\n        conn.commit()\n    return {"ok":True}\n\n\n@app.put("/api/admin/volunteers/{slot_id}/status")\ndef volunteer_status(slot_id:int,status:str=Query(...),authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    if status not in ("open","closed"): raise HTTPException(400,"status 錯誤")\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("UPDATE volunteer_slots SET status=%s WHERE id=%s RETURNING id",(status,slot_id))\n            row=cur.fetchone()\n        conn.commit()\n    if not row: raise HTTPException(404,"找不到義工時段")\n    return {"ok":True}\n\n\n@app.delete("/api/admin/volunteers/{slot_id}")\ndef delete_volunteer_slot(slot_id:int,authorization:str|None=Header(default=None)):\n    require_admin(authorization)\n    with db() as conn:\n        with conn.cursor() as cur:\n            cur.execute("DELETE FROM volunteer_slots WHERE id=%s RETURNING id",(slot_id,))\n            row=cur.fetchone()\n        conn.commit()\n    if not row: raise HTTPException(404,"找不到義工時段")\n    return {"ok":True}\n\n\n# ---------------- Admin auth ----------------
 
 class VolunteerSignupIn(BaseModel):
     player_id: int | None = None
@@ -982,54 +1000,34 @@ class VolunteerSlotIn(BaseModel):
 
 
 class AdminLogin(BaseModel):
-    password: str
+    password: str = Field(max_length=512)
 
 
 @app.post("/api/admin/login")
 def admin_login(body: AdminLogin):
+    if len(ADMIN_PASSWORD) < 12 or ADMIN_PASSWORD in {"change-me-now", "change-this", "replace-with-a-strong-random-password"}:
+        raise HTTPException(503, "請設定安全的管理員密碼")
     if not secrets.compare_digest(body.password, ADMIN_PASSWORD):
         raise HTTPException(401, "管理員密碼錯誤")
-    return {"token": f"admin:{ADMIN_PASSWORD}"}
-
+    session = issue_session(db, password_admin=True, web=True)
+    response = JSONResponse({"ok": True, "csrf_token": session["csrf_token"]})
+    response.set_cookie("team_admin", session["access_token"], max_age=8*3600,
+                        httponly=True, secure=True, samesite="strict", path="/")
+    return response
 
 def require_admin(authorization):
-    if not authorization:
-        raise HTTPException(401, "管理員驗證失敗")
-
-    expected = f"Bearer admin:{ADMIN_PASSWORD}"
-    if secrets.compare_digest(authorization, expected):
-        return {"type": "password"}
-
-    prefix = "Bearer parent-admin:"
-    if authorization.startswith(prefix):
-        try:
-            parent_id = int(authorization[len(prefix):])
-        except Exception:
-            raise HTTPException(401, "管理員驗證失敗")
-
-        with db() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT id,display_name,line_user_id,is_admin
-                    FROM parents
-                    WHERE id=%s
-                """, (parent_id,))
-                parent = cur.fetchone()
-
-        if parent and parent.get("is_admin", False):
-            return {"type": "line", "parent": parent}
-
-    raise HTTPException(401, "管理員驗證失敗")
-
+    return authenticate(db, authorization, admin=True)
 
 # ---------------- Admin models ----------------
 
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
+
 class PlayerIn(BaseModel):
-    name: str
+    name: NonBlank
     team: str
     number: str = ""
     active: bool = True
-    max_parents: int = 2
+    max_parents: int = Field(default=2, ge=1)
 
 
 class ParentIn(BaseModel):
@@ -1051,29 +1049,29 @@ class MatchIn(BaseModel):
 
 
 class EventIn(BaseModel):
-    title: str
-    event_date: str
-    location: str
+    title: NonBlank
+    event_date: date
+    location: NonBlank
     meal_enabled: bool = True
     meal_price: int = 0
     event_type: str = "practice"
     survey_enabled: bool = True
-    response_deadline: str | None = None
+    response_deadline: date | None = None
     meet_time: str | None = None
     meet_time_tbd: bool = False
     matches: list[MatchIn] = []
-    player_ids: list[int] = []
+    player_ids: list[int] = Field(min_length=1)
 
 
 class EventUpdateIn(EventIn):
-    status: str = "open"
+    status: Literal["open", "closed"] = "open"
 
 
 class PaymentIn(BaseModel):
     player_id: int
-    title: str
-    amount: int
-    due_date: str | None = None
+    title: NonBlank
+    amount: int = Field(ge=0)
+    due_date: date | None = None
     status: str = "unpaid"
     note: str = ""
 
@@ -1082,15 +1080,16 @@ class PaymentTransferIn(BaseModel):
     payment_method: str
     transfer_date: str
     account_last5: str = ""
+    expected_version: int = Field(ge=1)
 
 
 class PaymentBatchIn(BaseModel):
     target_type: str
     target_value: str | None = None
     target_values: list[str] = []
-    title: str
-    amount: int
-    due_date: str | None = None
+    title: NonBlank
+    amount: int = Field(ge=0)
+    due_date: date | None = None
     status: str = "unpaid"
     note: str = ""
 
@@ -1206,7 +1205,7 @@ def admin_dashboard(authorization: str | None = Header(default=None)):
             cur.execute("SELECT COUNT(*) n FROM parents")
             parents = cur.fetchone()["n"]
 
-            cur.execute("SELECT COUNT(*) n FROM events WHERE event_date >= %s", (date.today(),))
+            cur.execute("SELECT COUNT(*) n FROM events WHERE event_date >= %s", (taipei_today(),))
             events = cur.fetchone()["n"]
 
             cur.execute("SELECT COALESCE(SUM(amount),0) total FROM payments WHERE status<>'paid'")
@@ -1218,7 +1217,7 @@ def admin_dashboard(authorization: str | None = Header(default=None)):
                 JOIN events e ON e.id=ep.event_id
                 LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id
                 WHERE e.event_date >= %s AND a.id IS NULL
-            """, (date.today(),))
+            """, (taipei_today(),))
             pending = cur.fetchone()["n"]
 
             cur.execute("""
@@ -1603,57 +1602,24 @@ def admin_event_detail(event_id: int, authorization: str | None = Header(default
 
 
 @app.put("/api/payments/{payment_id}/transfer")
-def parent_report_payment_transfer(
-    payment_id: int,
-    body: PaymentTransferIn,
-    authorization: str | None = Header(default=None),
-):
+def parent_report_payment_transfer(payment_id: int, body: PaymentTransferIn, authorization: str | None = Header(default=None)):
     parent = current_parent(authorization)
-    payment_method = (body.payment_method or "").strip()
-    transfer_date = (body.transfer_date or "").strip()
-    account_last5 = (body.account_last5 or "").strip()
-
-    if payment_method not in ("cash", "transfer"):
-        raise HTTPException(400, "請選擇現場繳交或轉帳匯款")
-    if not transfer_date:
-        raise HTTPException(400, "請輸入繳交日期" if payment_method == "cash" else "請輸入轉帳日期")
-    if payment_method == "transfer":
-        if len(account_last5) != 5 or not account_last5.isdigit():
-            raise HTTPException(400, "帳號後五碼必須是 5 位數字")
-    else:
-        account_last5 = ""
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT pay.id,pay.status
-                FROM payments pay
-                JOIN parent_players pp ON pp.player_id=pay.player_id
-                WHERE pay.id=%s AND pp.parent_id=%s
-                LIMIT 1
-            """, (payment_id, parent["id"]))
-            payment = cur.fetchone()
-
-            if not payment:
-                raise HTTPException(404, "找不到繳費項目")
-            if payment["status"] == "paid":
-                raise HTTPException(400, "此筆繳費已確認完成")
-
-            cur.execute("""
-                UPDATE payments
-                SET status='pending',
-                    payment_method=%s,
-                    transfer_date=%s,
-                    transfer_account_last5=%s
-                WHERE id=%s
-                RETURNING id,player_id,title,amount,due_date::text,status,note,
-                          transfer_date::text,transfer_account_last5,payment_method
-            """, (payment_method, transfer_date, account_last5, payment_id))
-            row = cur.fetchone()
-        conn.commit()
-
-    return row
-
+    transfer_date, last5 = validate_report(body.payment_method, body.transfer_date, body.account_last5)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("""SELECT pay.* FROM payments pay JOIN parent_players pp ON pp.player_id=pay.player_id
+            JOIN players p ON p.id=pay.player_id WHERE pay.id=%s AND pp.parent_id=%s AND p.active=TRUE
+            FOR UPDATE OF pay""", (payment_id, parent["id"]))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(404, "找不到繳費項目")
+        if row["status"] == "paid" or row["version"] != body.expected_version:
+            raise HTTPException(409, "繳費資料已更新，請重新載入")
+        cur.execute("""UPDATE payments SET status='pending',payment_method=%s,transfer_date=%s,
+            transfer_account_last5=%s,version=version+1,updated_at=NOW() WHERE id=%s RETURNING *""",
+            (body.payment_method, transfer_date, last5, payment_id))
+        result = cur.fetchone()
+        cur.execute("INSERT INTO audit_logs(parent_id,action,resource_id) VALUES(%s,'payment_report',%s)", (parent["id"], str(payment_id)))
+    return result
 
 # ---------------- Admin payments ----------------
 
@@ -1685,6 +1651,10 @@ def export_payments_excel(title: str | None = Query(default=None), amount: int |
         ws.append([r["title"],r["player_name"],r["team"],r["amount"],r["due_date"] or "",st.get(r["status"],r["status"]),
             mt.get(r["payment_method"],""),r["transfer_date"] or "",
             r["transfer_account_last5"] if r["payment_method"]=="transfer" else "",r["note"] or ""])
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
     for i,w in enumerate([24,14,10,12,14,12,14,18,14,30],1): ws.column_dimensions[chr(64+i)].width=w
     ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
     bio=BytesIO(); wb.save(bio); bio.seek(0)
@@ -1704,7 +1674,7 @@ def admin_payments(authorization: str | None = Header(default=None)):
             cur.execute("""
                 SELECT pay.id,pay.player_id,p.name player_name,p.team,
                        pay.title,pay.amount,pay.due_date::text,pay.status,pay.note,
-                       pay.transfer_date::text,pay.transfer_account_last5,pay.payment_method
+                       pay.transfer_date::text,pay.transfer_account_last5,pay.payment_method,pay.version
                 FROM payments pay
                 JOIN players p ON p.id=pay.player_id
                 ORDER BY
@@ -1827,58 +1797,61 @@ def create_payment_batch(
 
 
 @app.put("/api/admin/payments/{payment_id}/status")
-def update_payment_status(
-    payment_id: int,
-    status: str = Query(...),
-    authorization: str | None = Header(default=None),
-):
-    require_admin(authorization)
-
-    if status not in ("unpaid", "paid", "pending"):
-        raise HTTPException(400, "status 錯誤")
-
-    with db() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE payments
-                SET status=%s
-                WHERE id=%s
-                RETURNING *
-            """, (status, payment_id))
-            row = cur.fetchone()
-        conn.commit()
-
-    if not row:
-        raise HTTPException(404, "找不到繳費項目")
-
-    return row
-
-
+def update_payment_status(payment_id: int, status: str = Query(...), expected_version: int = Query(..., ge=1),
+                          reason: str = Query(default="", max_length=2000), authorization: str | None = Header(default=None)):
+    actor = require_admin(authorization)
+    if status not in {"unpaid", "paid", "pending"}:
+        raise HTTPException(422, "狀態錯誤")
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM payments WHERE id=%s FOR UPDATE", (payment_id,))
+        old = cur.fetchone()
+        if not old:
+            raise HTTPException(404, "找不到繳費項目")
+        if old["version"] != expected_version:
+            raise HTTPException(409, "資料已更新，請重新載入")
+        if old["status"] == "paid" and status != "paid" and not reason.strip():
+            raise HTTPException(422, "修正已繳資料須填寫原因")
+        cur.execute("UPDATE payments SET status=%s,version=version+1,updated_at=NOW() WHERE id=%s RETURNING *", (status,payment_id))
+        result = cur.fetchone()
+        cur.execute("INSERT INTO audit_logs(parent_id,action,resource_id,details) VALUES(%s,%s,%s,%s::jsonb)",
+                    (actor["parent_id"], "payment_status:"+status, str(payment_id),
+                     json.dumps({"old_status": old["status"], "new_status": status, "reason": reason.strip()}, ensure_ascii=False)))
+    return result
 
 @app.delete("/api/admin/payments/{payment_id}")
 def delete_payment(
     payment_id: int,
+    expected_version: int = Query(..., ge=1),
+    reason: str = Query(default="", max_length=2000),
     authorization: str | None = Header(default=None),
 ):
-    require_admin(authorization)
+    actor = require_admin(authorization)
 
     with db() as conn:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT
                     pay.id,
-                    pay.title,
+                    pay.title,pay.status,pay.version,
                     pay.amount,
                     p.name AS player_name,
                     p.team
                 FROM payments pay
                 JOIN players p ON p.id=pay.player_id
                 WHERE pay.id=%s
+                FOR UPDATE OF pay
             """, (payment_id,))
             payment = cur.fetchone()
 
             if not payment:
                 raise HTTPException(404, "找不到繳費項目")
+
+            if payment["version"] != expected_version:
+                raise HTTPException(409, "繳費資料已更新，請重新載入")
+            if payment["status"] == "paid" and not reason.strip():
+                raise HTTPException(422, "刪除已繳資料須填写原因")
+            cur.execute("INSERT INTO audit_logs(parent_id,action,resource_id,details) VALUES(%s,'payment_deleted',%s,%s::jsonb)",
+                        (actor["parent_id"], str(payment_id), json.dumps({"status": payment["status"], "reason": reason.strip()}, ensure_ascii=False)))
 
             cur.execute("""
                 DELETE FROM payments
@@ -2908,3 +2881,6 @@ def notification_log(event_id: int, authorization: str | None = Header(default=N
                 LIMIT 100
             """, (event_id,))
             return cur.fetchall()
+
+
+register_mobile_api(app, db, current_parent, fetch_event_matches, normalize_time_value)

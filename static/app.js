@@ -1,7 +1,26 @@
 
 let token=localStorage.getItem("teamToken")||"",config={liff_id:"",mock_login:false},state={parent:null,players:[],playerId:null,events:[],attendance:{},payments:[],contentSeen:{}},pendingCode="",currentEventType="",announcementRowsCache=[],announcementLastSeenBeforeOpen="";
 const $=id=>document.getElementById(id),money=n=>new Intl.NumberFormat("zh-TW",{style:"currency",currency:"TWD",maximumFractionDigits:0}).format(Number(n||0));
-async function api(path,options={}){if(!options.method||String(options.method).toUpperCase()==="GET")options.cache="no-store";options.headers={...(options.headers||{}),"Content-Type":"application/json"};if(token)options.headers.Authorization=`Bearer ${token}`;const r=await fetch(path,options);if(!r.ok){let m="操作失敗";try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
+let refreshingSession=null;
+async function api(path,options={},retry=true){
+  options.headers={...(options.headers||{}),"Content-Type":"application/json"};
+  if(token)options.headers.Authorization=`Bearer ${token}`;
+  options.cache="no-store";
+  const r=await fetch(path,options);
+  if(r.status===401 && retry && localStorage.getItem("teamRefresh")){
+    if(!refreshingSession) refreshingSession=fetch("/api/auth/refresh",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({refresh_token:localStorage.getItem("teamRefresh")})}).then(async response=>{
+      if(!response.ok){localStorage.removeItem("teamRefresh");localStorage.removeItem("teamToken");token="";throw new Error("請重新登入")}
+      const session=await response.json();token=session.access_token;
+      localStorage.setItem("teamToken",token);localStorage.setItem("teamRefresh",session.refresh_token);
+    }).finally(()=>refreshingSession=null);
+    await refreshingSession;return api(path,options,false);
+  }
+  const data=await r.json();
+  if(!r.ok)throw new Error(typeof data.detail==="string"?data.detail:"請檢查輸入或重新整理後重試");
+  if(path==="/api/auth/line" && data.refresh_token)localStorage.setItem("teamRefresh",data.refresh_token);
+  return data;
+}
 function toast(m){$("toast").textContent=m;$("toast").classList.add("show");setTimeout(()=>$("toast").classList.remove("show"),1800)}
 function showOnly(id){["loading","login","friendship","binding","app"].forEach(x=>$(x).classList.toggle("hidden",x!==id))}
 async function finishLogin(accessToken){const r=await api("/api/auth/line",{method:"POST",body:JSON.stringify({access_token:accessToken})});token=r.token;localStorage.setItem("teamToken",token);await loadApp()}
@@ -99,7 +118,7 @@ async function loadApp(){
   $("playerSelect").innerHTML=state.players.map(p=>`<option value="${p.id}">${p.name}</option>`).join("");
   $("playerSelect").value=state.playerId;
   $("playerSelect").onchange=async e=>{state.playerId=Number(e.target.value);await refresh()};
-  state.events=await api("/api/events");
+  state.events=await api(`/api/events?player_id=${state.playerId}`);
   showOnly("app");
   await refresh();
 
@@ -484,7 +503,7 @@ if(refreshAnnouncementsBtn){
   };
 }
 
-async function refresh(){const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);await checkNewEvents();await checkNewPayments()}
+async function refresh(){state.events=await api(`/api/events?player_id=${state.playerId}`);const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);await checkNewEvents();await checkNewPayments()}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
     const a=state.attendance[ev.id];
@@ -592,7 +611,7 @@ $("paymentTransferForm").onsubmit=async e=>{
   try{
     await api(`/api/payments/${id}/transfer`,{
       method:"PUT",
-      body:JSON.stringify({payment_method,transfer_date,account_last5})
+      body:JSON.stringify({payment_method,transfer_date,account_last5,expected_version:state.payments.find(p=>Number(p.id)===id)?.version})
     });
     paymentTransferDialog.close();
     toast("繳費資料已送出，等待管理員確認");
@@ -656,12 +675,14 @@ attendanceListDialog.addEventListener("close",()=>{
   unlockAttendanceDialogPage();
 });
 
+let editingEventPlayerId=0,editingEventVersion=0;
 window.openEvent=id=>{
   const ev=state.events.find(x=>Number(x.id)===Number(id));
   if(!ev)return;
 
   currentEventType=ev.event_type||"practice";
   const a=state.attendance[id];
+  editingEventPlayerId=state.playerId;editingEventVersion=a?.version||0;
 
   $("eventId").value=id;
   $("dialogEventTitle").textContent=ev.title;
@@ -709,7 +730,8 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{
     ?(document.querySelector("input[name=practice_duration]:checked")?.value||"full")
     :"full";
   await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({
-    player_id:state.playerId,
+    player_id:editingEventPlayerId,
+    expected_version:editingEventVersion,
     attendance_status:selectedStatus,
     leave_reason:selectedStatus==="leave"?$("leaveReason").value:"",
     practice_duration:selectedDuration,
@@ -724,58 +746,17 @@ function updateManagementVisibility(){
   nav.classList.toggle("hidden",!state.parent?.is_admin);
 }
 
-async function openIntegratedAdmin(forceReload=false){
-  const loading=$("managementLoading");
-  const denied=$("managementDenied");
-  const frame=$("adminFrame");
-
-  loading?.classList.remove("hidden");
-  denied?.classList.add("hidden");
-  frame?.classList.add("hidden");
-
+async function openIntegratedAdmin(){
+  const loading=$("managementLoading"),denied=$("managementDenied"),frame=$("adminFrame");
+  loading?.classList.remove("hidden");denied?.classList.add("hidden");frame?.classList.add("hidden");
   try{
-    const r=await api("/api/me/admin-session");
-    integratedAdminToken=r.token;
-
-    if(forceReload || !frame.src){
-      frame.src="/admin?embedded=1";
-    }
-
-    const sendToken=()=>{
-      try{
-        frame.contentWindow?.postMessage({
-          type:"TEAM_PARENT_ADMIN_AUTH",
-          token:integratedAdminToken
-        },location.origin);
-      }catch(e){
-        console.error("admin iframe auth failed",e);
-      }
-    };
-
-    frame.onload=()=>{
-      sendToken();
-      setTimeout(sendToken,150);
-      loading?.classList.add("hidden");
-      frame?.classList.remove("hidden");
-    };
-
-    // iframe may already be loaded.
-    if(frame.contentWindow && frame.src){
-      sendToken();
-      setTimeout(()=>{
-        loading?.classList.add("hidden");
-        frame?.classList.remove("hidden");
-      },250);
-    }
-
-  }catch(e){
-    loading?.classList.add("hidden");
-    frame?.classList.add("hidden");
-    denied?.classList.remove("hidden");
-    console.error(e);
-  }
+    const handoff=await api("/api/auth/web-handoff",{method:"POST"});
+    const url=new URL(handoff.url);
+    if(url.origin!==location.origin)throw new Error("管理入口網域設定不一致");
+    frame.onload=()=>{loading?.classList.add("hidden");frame?.classList.remove("hidden")};
+    frame.src=url.href;
+  }catch(e){loading?.classList.add("hidden");denied?.classList.remove("hidden");toast(e.message)}
 }
-
 $("reloadAdminFrame")?.addEventListener("click",()=>openIntegratedAdmin(true));
 
 const newAnnouncementHomeNotice=$("newAnnouncementHomeNotice");
@@ -964,3 +945,11 @@ window.addEventListener("load",updateInstallUI);
 start();
 
 console.log("qingshan release 20260905-2 loaded");
+
+const deleteAccountButton=document.getElementById("deleteAccountBtn");
+if(deleteAccountButton)deleteAccountButton.onclick=async()=>{
+  if(prompt("此操作刪除家長個資、綁定及個人訊息。共用球員出席與繳費保留。請先重新登入，再輸入「刪除帳號」")!=="刪除帳號")return;
+  try{await api("/api/me/deletion-request",{method:"POST",body:JSON.stringify({confirmation:"刪除帳號"})});
+    localStorage.removeItem("teamToken");localStorage.removeItem("teamRefresh");location.reload();
+  }catch(e){toast(e.message)}
+};
