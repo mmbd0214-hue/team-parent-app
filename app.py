@@ -1638,24 +1638,24 @@ def export_payments_excel(title: str | None = Query(default=None), amount: int |
     where_sql=(" WHERE "+" AND ".join(conditions)) if conditions else ""
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"""SELECT p.name player_name,p.team,pay.title,pay.amount,pay.due_date::text,pay.status,
+            cur.execute(f"""SELECT p.name player_name,p.team,p.number,pay.title,pay.amount,pay.due_date::text,pay.status,
                 pay.note,pay.payment_method,pay.transfer_date::text,pay.transfer_account_last5
                 FROM payments pay JOIN players p ON p.id=pay.player_id {where_sql}
                 ORDER BY pay.title,pay.due_date NULLS LAST,p.team,p.name""",tuple(params))
             rows=cur.fetchall()
     wb=Workbook(); ws=wb.active; ws.title="繳費明細"
-    ws.append(["繳費項目","球員","組別","金額","繳費期限","狀態","繳費方式","繳交/轉帳日期","帳號後五碼","備註"])
+    ws.append(["繳費項目","背號","球員","組別","金額","繳費期限","狀態","繳費方式","繳交/轉帳日期","帳號後五碼","備註"])
     for c in ws[1]: c.font=Font(bold=True); c.alignment=Alignment(horizontal="center")
     st={"paid":"已繳","pending":"待確認","unpaid":"未繳"}; mt={"cash":"現場繳交","transfer":"轉帳匯款"}
     for r in rows:
-        ws.append([r["title"],r["player_name"],r["team"],r["amount"],r["due_date"] or "",st.get(r["status"],r["status"]),
+        ws.append([r["title"],r["number"] or "",r["player_name"],r["team"],r["amount"],r["due_date"] or "",st.get(r["status"],r["status"]),
             mt.get(r["payment_method"],""),r["transfer_date"] or "",
             r["transfer_account_last5"] if r["payment_method"]=="transfer" else "",r["note"] or ""])
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             if isinstance(cell.value, str):
                 cell.data_type = "s"
-    for i,w in enumerate([24,14,10,12,14,12,14,18,14,30],1): ws.column_dimensions[chr(64+i)].width=w
+    for i,w in enumerate([24,8,14,10,12,14,12,14,18,14,30],1): ws.column_dimensions[chr(64+i)].width=w
     ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
     bio=BytesIO(); wb.save(bio); bio.seek(0)
     filename="payments.xlsx" if title is None else f"{title}_繳費明細.xlsx"
