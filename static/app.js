@@ -503,7 +503,7 @@ if(refreshAnnouncementsBtn){
   };
 }
 
-async function refresh(){state.events=await api(`/api/events?player_id=${state.playerId}`);const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);await checkNewEvents();await checkNewPayments()}
+async function refresh(){state.events=await api(`/api/events?player_id=${state.playerId}`);const p=state.players.find(x=>x.id===state.playerId);$("playerName").textContent=(p.number!==null && p.number!==undefined && String(p.number).trim()!=="" ? `#${p.number} ` : "")+p.name;$("playerTeam").textContent=p.team;const a=await api(`/api/players/${state.playerId}/attendance`);state.attendance=Object.fromEntries(a.map(x=>[x.event_id,x]));state.payments=await api(`/api/players/${state.playerId}/payments`);renderEvents();renderPayments(state.payments);await checkNewEvents();await checkNewPayments()}
 function renderEvents(){
   $("events").innerHTML=state.events.map(ev=>{
     const a=state.attendance[ev.id];
