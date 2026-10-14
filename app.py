@@ -865,7 +865,9 @@ def parent_event_attendance_summary(event_id: int, authorization: str | None = H
 
             cur.execute("""
                 SELECT p.id,p.name,p.team,p.number,
-                       a.attendance_status,a.practice_duration,a.attendance_note,a.leave_reason
+                       a.attendance_status,a.practice_duration,a.attendance_note,a.leave_reason,
+                       COALESCE(a.player_meals,0) AS player_meals,
+                       COALESCE(a.parent_meals,0) AS parent_meals
                 FROM event_players ep
                 JOIN players p ON p.id=ep.player_id
                 LEFT JOIN attendance a
