@@ -819,7 +819,7 @@ def parent_events(player_id: int | None = Query(default=None), authorization: st
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT e.id,e.title,e.event_date,e.location,e.meal_price,
-                       e.status,e.event_type,e.survey_enabled,e.response_deadline,e.meet_time,e.meet_time_tbd
+                       e.status,e.event_type,e.survey_enabled,e.meal_enabled,e.response_deadline,e.meet_time,e.meet_time_tbd
                 FROM events e
                 WHERE e.id IN (
                     SELECT ep.event_id
@@ -910,8 +910,8 @@ class AttendanceIn(BaseModel):
     leave_reason: str = ""
     practice_duration: str = "full"
     attendance_note: str = ""
-    player_meals: int | None = None
-    parent_meals: int | None = None
+    player_meals: int | None = Field(default=None, ge=0, le=100)
+    parent_meals: int | None = Field(default=None, ge=0, le=100)
     expected_version: int = Field(ge=0)
 
 
@@ -1052,8 +1052,8 @@ class EventIn(BaseModel):
     title: NonBlank
     event_date: date
     location: NonBlank
-    meal_enabled: bool = True
-    meal_price: int = 0
+    meal_enabled: bool = False
+    meal_price: int = Field(default=0, ge=0)
     event_type: str = "practice"
     survey_enabled: bool = True
     response_deadline: date | None = None

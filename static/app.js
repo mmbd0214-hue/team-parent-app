@@ -701,6 +701,9 @@ window.openEvent=id=>{
 
   $("leaveReason").value=a?.leave_reason||"";
   $("attendanceNote").value=a?.attendance_note||"";
+  $("eventMealBox").classList.toggle("hidden",!ev.meal_enabled);
+  $("eventPlayerMeals").value=Number(a?.player_meals||0);
+  $("eventParentMeals").value=Number(a?.parent_meals||0);
 
 
   toggleAttendanceOptions();
@@ -729,13 +732,17 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{
   const selectedDuration=(currentEventType==="practice"&&selectedStatus==="attend")
     ?(document.querySelector("input[name=practice_duration]:checked")?.value||"full")
     :"full";
+  if(state.events.find(x=>Number(x.id)===id)?.meal_enabled && ["eventPlayerMeals","eventParentMeals"].some(k=>!Number.isInteger(Number($(k).value))||Number($(k).value)<0||Number($(k).value)>100||$(k).value.trim()===""))throw new Error("訂餐數量請輸入 0～100 的整數");
   await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({
     player_id:editingEventPlayerId,
     expected_version:editingEventVersion,
     attendance_status:selectedStatus,
     leave_reason:selectedStatus==="leave"?$("leaveReason").value:"",
     practice_duration:selectedDuration,
-    attendance_note:selectedStatus==="attend"?$("attendanceNote").value:""
+    attendance_note:selectedStatus==="attend"?$("attendanceNote").value:"",
+    ...(state.events.find(x=>Number(x.id)===id)?.meal_enabled?{
+      player_meals:Number($("eventPlayerMeals").value),parent_meals:Number($("eventParentMeals").value)
+    }:{})
   })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 
 let integratedAdminToken="";
