@@ -665,7 +665,7 @@ window.openAttendanceList=async id=>{
     const showMeals=!!ev.meal_enabled;
     const mealTotal=rows.reduce((sum,p)=>sum+Number(p.player_meals||0)+Number(p.parent_meals||0),0);
     const mealHeader=showMeals?`<div class="card">🍱 訂餐總份數：<strong>${mealTotal}</strong> 份（球員 ${rows.reduce((n,p)=>n+Number(p.player_meals||0),0)}／家長 ${rows.reduce((n,p)=>n+Number(p.parent_meals||0),0)}）</div>`:"";
-    $("attendanceListContent").innerHTML=mealHeader+groups.map(g=>`<section class="attendanceGroup ${g.key}"><div class="attendanceGroupTitle"><strong>${g.title}</strong><span>${g.rows.length} 人</span></div>${g.rows.length?`<div class="attendancePlayerList">${g.rows.map(p=>`<div class="attendancePlayer"><div class="attendancePlayerMain"><span>${attendancePlayerLabel(p)}</span>${p.attendance_status==="attend"&&String(p.attendance_note||"").trim()?`<div class="attendancePublicNote">📝 備註：${escapeHtml(p.attendance_note)}</div>`:p.attendance_status==="leave"&&String(p.leave_reason||"").trim()?`<div class="attendancePublicNote">📝 請假原因：${escapeHtml(p.leave_reason)}</div>`:""}</div><small>${escapeHtml(attendanceStatusText(p))}</small>${showMeals&&p.attendance_status?`<div class="attendancePublicNote">🍱 ${Number(p.player_meals||0)+Number(p.parent_meals||0)===0?"不訂餐":`球員 ${Number(p.player_meals||0)} 份／家長 ${Number(p.parent_meals||0)} 份`}</div>`:""}</div>`).join("")}</div>`:'<div class="muted attendanceEmpty">目前沒有</div>'}</section>`).join("");
+    $("attendanceListContent").innerHTML=mealHeader+groups.map(g=>`<section class="attendanceGroup ${g.key}"><div class="attendanceGroupTitle"><strong>${g.title}</strong><span>${g.rows.length} 人</span></div>${g.rows.length?`<div class="attendancePlayerList">${g.rows.map(p=>`<div class="attendancePlayer"><div class="attendancePlayerMain"><span>${attendancePlayerLabel(p)}</span>${p.attendance_status==="attend"&&String(p.attendance_note||"").trim()?`<div class="attendancePublicNote">📝 備註：${escapeHtml(p.attendance_note)}</div>`:p.attendance_status==="leave"&&String(p.leave_reason||"").trim()?`<div class="attendancePublicNote">📝 請假原因：${escapeHtml(p.leave_reason)}</div>`:""}</div><small>${escapeHtml(attendanceStatusText(p))}</small>${showMeals&&p.attendance_status==="attend"?`<div class="attendancePublicNote">🍱 ${Number(p.player_meals||0)+Number(p.parent_meals||0)===0?"不訂餐":`球員 ${Number(p.player_meals||0)} 份／家長 ${Number(p.parent_meals||0)} 份`}</div>`:""}</div>`).join("")}</div>`:'<div class="muted attendanceEmpty">目前沒有</div>'}</section>`).join("");
   }catch(e){
     $("attendanceListContent").innerHTML=`<div class="card muted">${escapeHtml(e.message)}</div>`;
   }
@@ -736,6 +736,10 @@ function toggleAttendanceOptions(){
 
   // 整天請假，或練球只有半天出席時，都可填請假原因。
   $("leaveBox").classList.toggle("hidden",!(isLeave||isPartialLeave));
+
+  // 請假時不顯示訂餐；若改回出席，恢復原本的訂餐輸入值。
+  const ev=state.events.find(x=>Number(x.id)===Number($("eventId").value));
+  $("eventMealBox").classList.toggle("hidden",!isAttend||!ev?.meal_enabled);
 }
 document.querySelectorAll("input[name=status], input[name=practice_duration]").forEach(x=>x.onchange=toggleAttendanceOptions);$("closeDialog").onclick=()=>eventDialog.close();
 $("eventForm").onsubmit=async e=>{e.preventDefault();try{
@@ -744,7 +748,7 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{
   const selectedDuration=(currentEventType==="practice"&&selectedStatus==="attend")
     ?(document.querySelector("input[name=practice_duration]:checked")?.value||"full")
     :"full";
-  if(state.events.find(x=>Number(x.id)===id)?.meal_enabled && !$("eventNoMeals").checked && ["eventPlayerMeals","eventParentMeals"].some(k=>!Number.isInteger(Number($(k).value))||Number($(k).value)<0||Number($(k).value)>100||$(k).value.trim()===""))throw new Error("訂餐數量請輸入 0～100 的整數");
+  if(selectedStatus==="attend" && state.events.find(x=>Number(x.id)===id)?.meal_enabled && !$("eventNoMeals").checked && ["eventPlayerMeals","eventParentMeals"].some(k=>!Number.isInteger(Number($(k).value))||Number($(k).value)<0||Number($(k).value)>100||$(k).value.trim()===""))throw new Error("訂餐數量請輸入 0～100 的整數");
   await api(`/api/events/${id}/attendance`,{method:"PUT",body:JSON.stringify({
     player_id:editingEventPlayerId,
     expected_version:editingEventVersion,
@@ -753,7 +757,7 @@ $("eventForm").onsubmit=async e=>{e.preventDefault();try{
     practice_duration:selectedDuration,
     attendance_note:selectedStatus==="attend"?$("attendanceNote").value:"",
     ...(state.events.find(x=>Number(x.id)===id)?.meal_enabled?{
-      player_meals:$("eventNoMeals").checked?0:Number($("eventPlayerMeals").value),parent_meals:$("eventNoMeals").checked?0:Number($("eventParentMeals").value)
+      player_meals:selectedStatus==="leave"||$("eventNoMeals").checked?0:Number($("eventPlayerMeals").value),parent_meals:selectedStatus==="leave"||$("eventNoMeals").checked?0:Number($("eventParentMeals").value)
     }:{})
   })});eventDialog.close();toast("登記完成");await refresh()}catch(e){toast(e.message)}};
 
