@@ -192,3 +192,29 @@ body.attendance-dialog-open{
 
 /* Parent payment note */
 .paymentNote{margin-top:8px;font-size:14px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+
+/* 青山棒球隊：家長首頁球員資訊卡背景（加入 static/style.css 最後） */
+#homePage .hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background-color: #164a7c;
+  background-image:
+    linear-gradient(90deg, rgba(7, 28, 52, .79) 0%, rgba(7, 28, 52, .49) 52%, rgba(7, 28, 52, .15) 100%),
+    url('/static/images/team-hero.webp');
+  background-position: center, center 48%;
+  background-repeat: no-repeat;
+  background-size: cover;
+  color: #fff;
+  min-height: 150px;
+}
+#homePage .hero h2,
+#homePage .hero .eyebrow,
+#homePage .hero .pill {
+  color: #fff;
+  text-shadow: 0 2px 5px rgba(0,0,0,.55);
+}
+#homePage .hero .pill {
+  background: rgba(8, 34, 57, .58);
+  border-color: rgba(255,255,255,.35);
+}
