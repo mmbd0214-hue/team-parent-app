@@ -218,3 +218,20 @@ body.attendance-dialog-open{
   background: rgba(8, 34, 57, .58);
   border-color: rgba(255,255,255,.35);
 }
+
+/* 2026-10-14: 青山棒球隊藍色主題 */
+:root{--bg:#f0f6ff;--card:#fff;--text:#172b46;--muted:#60758d;--accent:#1456a0;--soft:#e6f1ff;--danger:#a23b32}
+.screen{background:var(--bg)}
+header{background:rgba(240,246,255,.94)}
+.secondary{border-color:#d2e1f2}
+nav{border-top-color:#dce8f7}
+nav button{color:#60758d}
+.eventCard button,.volunteerCard button{background:var(--soft);color:var(--accent)}
+.segmented span{background:#e8f0fa}
+.mealGrid div,.matchLine,.bindResult{background:#eaf2fd}
+.installHelp{background:#eaf2fd}
+textarea,.bindCodeInput,.volunteerPlayerLabel select{border-color:#cadcf1}
+#toast{background:#17365c}
+/* 只替換啟動及登入畫面的虎頭圖案，其他流程圖示不動 */
+#loading .logo,#login .logo{width:min(300px,80vw);height:120px;border-radius:20px;background:linear-gradient(135deg,#dbeeff,#f4f9ff);box-shadow:0 12px 28px #1456a022;overflow:hidden;padding:6px}
+#loading .logo img,#login .logo img{display:block;width:100%;height:100%;object-fit:contain}

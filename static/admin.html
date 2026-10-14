@@ -2,10 +2,10 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>球隊管理後台</title><link rel="stylesheet" href="/static/admin.css">
+<title>球隊管理後台</title><link rel="stylesheet" href="/static/admin.css?v=20261014-blue1">
 </head>
 <body>
-<div id="loginBox" class="loginWrap"><div class="loginCard"><div class="logo">🐯</div><h1>球隊管理後台</h1><p>管理球員、家長、活動、通知與繳費</p><input id="adminPassword" type="password" placeholder="管理員密碼"><button id="loginBtn">登入</button><div id="loginError" class="error"></div></div></div>
+<div id="loginBox" class="loginWrap"><div class="loginCard"><div class="logo"><img src="/static/images/team-logo.webp" alt="青山社區棒球隊 Logo"></div><h1>球隊管理後台</h1><p>管理球員、家長、活動、通知與繳費</p><input id="adminPassword" type="password" placeholder="管理員密碼"><button id="loginBtn">登入</button><div id="loginError" class="error"></div></div></div>
 
 <div id="adminApp" class="app hidden">
 <aside><div class="brand">🐯 球隊後台</div><nav>
@@ -273,7 +273,6 @@
 <div class="grid2"><label>集合時間<input id="eventMeetTimeInput" type="time"></label><label class="check timeTbd"><input id="eventMeetTimeTbdInput" type="checkbox"> 集合時間未定</label></div>
 <div class="matchHeader"><strong>比賽場次</strong><button type="button" class="ghost" onclick="addMatchRow()">＋ 新增場次</button></div><div id="matchRows" class="matchRows"></div>
 <label>類型<select id="eventTypeInput"><option value="practice">練球</option><option value="game">比賽</option><option value="event">活動</option></select></label>
-<label class="check"><input id="eventMealEnabledInput" type="checkbox"> 開放訂餐（家長可填寫球員及家長訂餐份數）</label>
 <label id="eventStatusLabel" class="hidden">狀態<select id="eventStatusInput"><option value="open">開放</option><option value="closed">關閉</option></select></label>
 <div class="toolbar small"><strong>通知 / 調查球員</strong><div><button type="button" class="ghost" onclick="toggleAllPlayers(true)">全選目前分組</button><button type="button" class="ghost" onclick="toggleAllPlayers(false)">取消目前分組</button></div></div>
 <div class="eventPlayerFilter">

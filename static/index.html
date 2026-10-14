@@ -4,22 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>青山社區棒球隊家長 APP</title>
-  <meta name="theme-color" content="#183f2b">
+  <meta name="theme-color" content="#1456a0">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="青山棒球">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/style.css?v=20261014-1">
+  <link rel="stylesheet" href="/static/style.css?v=20261014-blue1">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
 <div id="loading" class="screen center">
-  <div class="logo">🐯</div><h1>球隊家長 App</h1><p class="muted" id="loadingText">正在連接 LINE...</p>
+  <div class="logo"><img src="/static/images/team-logo.webp" alt="青山社區棒球隊 Logo"></div><h1>球隊家長 App</h1><p class="muted" id="loadingText">正在連接 LINE...</p>
 </div>
 
 <div id="login" class="screen center hidden">
-  <div class="logo">🐯</div><h1>球隊家長 App</h1><p class="muted">請使用 LINE 登入</p>
+  <div class="logo"><img src="/static/images/team-logo.webp" alt="青山社區棒球隊 Logo"></div><h1>球隊家長 App</h1><p class="muted">請使用 LINE 登入</p>
   <button id="lineLogin" class="line-btn">LINE 登入</button>
   <button id="mockLogin" class="secondary hidden">測試登入</button>
 </div>
@@ -197,7 +197,6 @@
     <label for="leaveReason">請假原因（選填）</label>
     <textarea id="leaveReason" rows="3" placeholder="可填寫請假原因"></textarea>
   </div>
-  <div id="eventMealBox" class="hidden"><h3>🍱 訂餐選擇</h3><label class="check"><input id="eventNoMeals" type="checkbox"> 不訂餐</label><div id="eventMealQuantityBox"><p class="muted">請填寫訂餐份數</p><label>球員餐數<input id="eventPlayerMeals" type="number" min="0" max="100" step="1" value="1" inputmode="numeric"></label><label>家長餐數<input id="eventParentMeals" type="number" min="0" max="100" step="1" value="0" inputmode="numeric"></label></div></div>
   <button type="submit" class="primary">確認登記</button>
 </form>
 </dialog>
