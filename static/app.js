@@ -705,7 +705,7 @@ window.openEvent=id=>{
   $("leaveReason").value=a?.leave_reason||"";
   $("attendanceNote").value=a?.attendance_note||"";
   $("eventMealBox").classList.toggle("hidden",!ev.meal_enabled);
-  $("eventPlayerMeals").value=Number(a?.player_meals||0);
+  $("eventPlayerMeals").value=a ? Number(a.player_meals||0) : 1;
   $("eventParentMeals").value=Number(a?.parent_meals||0);
   $("eventNoMeals").checked=!!a && Number(a.player_meals||0)+Number(a.parent_meals||0)===0;
   toggleMealQuantity();
