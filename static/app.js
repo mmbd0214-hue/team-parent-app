@@ -663,8 +663,24 @@ window.openAttendanceList=async id=>{
       {key:"pending",title:"尚未回覆",rows:rows.filter(x=>!x.attendance_status)}
     ];
     const showMeals=!!ev.meal_enabled;
-    const mealTotal=rows.reduce((sum,p)=>sum+Number(p.player_meals||0)+Number(p.parent_meals||0),0);
-    const mealHeader=showMeals?`<div class="card">🍱 訂餐總份數：<strong>${mealTotal}</strong> 份（球員 ${rows.reduce((n,p)=>n+Number(p.player_meals||0),0)}／家長 ${rows.reduce((n,p)=>n+Number(p.parent_meals||0),0)}）</div>`:"";
+    // 只統計本活動的出席球員，依少棒／青少棒分開顯示，不顯示跨組總數。
+    const mealGroups=[
+      {label:"少棒（U12＋U10）",test:t=>/U\s*[-_]?\s*(12|10)(?!\d)|少棒(?!青)/i.test(t)},
+      {label:"青少棒（U15＋U13）",test:t=>/U\s*[-_]?\s*(15|13)(?!\d)|青少棒/i.test(t)},
+      {label:"其他組別",test:()=>true}
+    ];
+    const mealBuckets=mealGroups.map(g=>({...g,players:[]}));
+    rows.forEach(p=>{
+      const team=String(p.team||"");
+      const bucket=mealBuckets.find(g=>g.test(team));
+      bucket.players.push(p);
+    });
+    const mealHeader=showMeals?mealBuckets.filter(g=>g.players.length).map(g=>{
+      const attending=g.players.filter(p=>p.attendance_status==="attend");
+      const playerMeals=attending.reduce((n,p)=>n+Number(p.player_meals||0),0);
+      const parentMeals=attending.reduce((n,p)=>n+Number(p.parent_meals||0),0);
+      return `<div class="card">🍱 ${g.label} 訂餐：<strong>${playerMeals+parentMeals}</strong> 份（球員 ${playerMeals}／家長 ${parentMeals}）</div>`;
+    }).join(""):"";
     $("attendanceListContent").innerHTML=mealHeader+groups.map(g=>`<section class="attendanceGroup ${g.key}"><div class="attendanceGroupTitle"><strong>${g.title}</strong><span>${g.rows.length} 人</span></div>${g.rows.length?`<div class="attendancePlayerList">${g.rows.map(p=>`<div class="attendancePlayer"><div class="attendancePlayerMain"><span>${attendancePlayerLabel(p)}</span>${p.attendance_status==="attend"&&String(p.attendance_note||"").trim()?`<div class="attendancePublicNote">📝 備註：${escapeHtml(p.attendance_note)}</div>`:p.attendance_status==="leave"&&String(p.leave_reason||"").trim()?`<div class="attendancePublicNote">📝 請假原因：${escapeHtml(p.leave_reason)}</div>`:""}</div><small>${escapeHtml(attendanceStatusText(p))}</small>${showMeals&&p.attendance_status==="attend"?`<div class="attendancePublicNote">🍱 ${Number(p.player_meals||0)+Number(p.parent_meals||0)===0?"不訂餐":`球員 ${Number(p.player_meals||0)} 份／家長 ${Number(p.parent_meals||0)} 份`}</div>`:""}</div>`).join("")}</div>`:'<div class="muted attendanceEmpty">目前沒有</div>'}</section>`).join("");
   }catch(e){
     $("attendanceListContent").innerHTML=`<div class="card muted">${escapeHtml(e.message)}</div>`;
