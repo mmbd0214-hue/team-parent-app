@@ -197,6 +197,16 @@
     <label for="leaveReason">請假原因（選填）</label>
     <textarea id="leaveReason" rows="3" placeholder="可填寫請假原因"></textarea>
   </div>
+  <div id="eventMealBox" class="hidden">
+    <h3>🍱 訂餐</h3>
+    <label class="check"><input id="eventNoMeals" type="checkbox"> 不訂餐</label>
+    <div id="eventMealQuantityBox">
+      <label for="eventPlayerMeals">球員餐數</label>
+      <input id="eventPlayerMeals" type="number" min="0" max="100" step="1" inputmode="numeric" value="1">
+      <label for="eventParentMeals">家長餐數</label>
+      <input id="eventParentMeals" type="number" min="0" max="100" step="1" inputmode="numeric" value="0">
+    </div>
+  </div>
   <button type="submit" class="primary">確認登記</button>
 </form>
 </dialog>
@@ -249,6 +259,6 @@
 </dialog>
 
 <div id="toast"></div>
-<script src="/static/app.js?v=20260910-1"></script>
+<script src="/static/app.js?v=20261014-meal-fix1"></script>
 </body>
 </html>
