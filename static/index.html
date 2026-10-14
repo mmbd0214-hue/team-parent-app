@@ -11,6 +11,33 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/static/style.css?v=20261014-blue1">
+  <!-- iPhone Safari / PWA: display the full team emblem without cropping -->
+  <style>
+    #loading .logo, #login .logo {
+      box-sizing: border-box !important;
+      width: min(260px, 72vw) !important;
+      height: auto !important;
+      aspect-ratio: 1 / 1 !important;
+      padding: 10px !important;
+      overflow: visible !important;
+      border-radius: 24px !important;
+      background: #e4f0ff !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      flex: 0 0 auto !important;
+    }
+    #loading .logo img, #login .logo img {
+      display: block !important;
+      width: 100% !important;
+      height: 100% !important;
+      max-width: 100% !important;
+      max-height: 100% !important;
+      object-fit: contain !important;
+      object-position: center !important;
+      border-radius: 14px;
+    }
+  </style>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
 <body>
