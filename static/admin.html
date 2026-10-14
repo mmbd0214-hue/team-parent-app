@@ -267,6 +267,7 @@
 <h2 id="eventDialogTitle">建立活動 / 比賽</h2><input type="hidden" id="editEventId">
 <label>名稱<input id="eventTitleInput" required></label>
 <label class="check"><input id="eventNoticeOnlyInput" type="checkbox"> 只公告、不調查出席</label>
+<label class="check"><input id="eventMealEnabledInput" type="checkbox"> 開啟活動訂餐</label>
 <p class="muted">勾選後活動仍會顯示在家長端，也可以發送 LINE 通知，但家長不需要回覆出席／請假。</p>
 <div class="grid2"><label>日期<input id="eventDateInput" type="date" required></label><label>回覆截止<input id="eventDeadlineInput" type="date"></label></div>
 <label>地點<input id="eventLocationInput" required></label>
@@ -333,7 +334,7 @@
 </form></dialog>
 
 <dialog id="volunteerDialog"><form id="volunteerForm"><h2>新增義工日期</h2><label>日期<input id="volunteerDateInput" type="date" required></label><label>組別</label><div class="messageChecks"><label class="check"><input type="checkbox" name="volunteerGroup" value="少棒" checked> 少棒</label><label class="check"><input type="checkbox" name="volunteerGroup" value="青少棒" checked> 青少棒</label></div><label>每組需要人數<input id="volunteerCapacityInput" type="number" min="1" max="10" value="1"></label><label>備註<input id="volunteerNoteInput" placeholder="例如：協助收費、場地整理"></label><div class="actions"><button type="button" onclick="volunteerDialog.close()" class="ghost">取消</button><button>建立</button></div></form></dialog>
-<div id="toast"></div><script src="/static/admin.js"></script>
+<div id="toast"></div><script src="/static/admin.js?v=20261014-event-edit-fix"></script>
 
 <div id="announcementEditModal" class="modal hidden">
   <div class="modalBackdrop" data-close-announcement-edit></div>
