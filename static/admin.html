@@ -334,7 +334,7 @@
 </form></dialog>
 
 <dialog id="volunteerDialog"><form id="volunteerForm"><h2>新增義工日期</h2><label>日期<input id="volunteerDateInput" type="date" required></label><label>組別</label><div class="messageChecks"><label class="check"><input type="checkbox" name="volunteerGroup" value="少棒" checked> 少棒</label><label class="check"><input type="checkbox" name="volunteerGroup" value="青少棒" checked> 青少棒</label></div><label>每組需要人數<input id="volunteerCapacityInput" type="number" min="1" max="10" value="1"></label><label>備註<input id="volunteerNoteInput" placeholder="例如：協助收費、場地整理"></label><div class="actions"><button type="button" onclick="volunteerDialog.close()" class="ghost">取消</button><button>建立</button></div></form></dialog>
-<div id="toast"></div><script src="/static/admin.js?v=20261014-event-edit-fix"></script>
+<div id="toast"></div>
 
 <div id="announcementEditModal" class="modal hidden">
   <div class="modalBackdrop" data-close-announcement-edit></div>
@@ -385,4 +385,5 @@
     <p class="muted">※ 修改只會更新 App 公告，不會修改或收回已發出的 LINE 訊息。</p>
   </div>
 </div>
+<script src="/static/admin.js?v=20261102-announcement-edit-fix1"></script>
 </body></html>
