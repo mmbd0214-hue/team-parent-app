@@ -378,6 +378,30 @@ function escapeParentHtml(text){
     .replaceAll("'","&#039;");
 }
 
+// Convert URLs in announcement text into safe clickable links while preserving line breaks.
+function renderAnnouncementText(message){
+  const text=String(message??"");
+  const urlPattern=/https?:\/\/[^\s<>"']+/gi;
+  let result="",lastIndex=0;
+  for(const match of text.matchAll(urlPattern)){
+    const start=match.index;
+    const raw=match[0];
+    const urlText=raw.replace(/[.,!?;:，。！？；：、）)\]】]+$/u,"");
+    result+=escapeParentHtml(text.slice(lastIndex,start)).replace(/\r?\n/g,"<br>");
+    if(urlText){
+      try{
+        const url=new URL(urlText);
+        if(url.protocol==="https:"||url.protocol==="http:"){
+          result+=`<a href="${escapeParentHtml(url.href)}" target="_blank" rel="noopener noreferrer" style="color:#1456a0;text-decoration:underline;overflow-wrap:anywhere">${escapeParentHtml(urlText)}</a>`;
+        }else result+=escapeParentHtml(urlText);
+      }catch{result+=escapeParentHtml(urlText);}
+    }
+    result+=escapeParentHtml(raw.slice(urlText.length));
+    lastIndex=start+raw.length;
+  }
+  return result+escapeParentHtml(text.slice(lastIndex)).replace(/\r?\n/g,"<br>");
+}
+
 async function loadAnnouncements(){
   const box=$("announcementList");
   if(!box) return;
@@ -437,7 +461,7 @@ async function loadAnnouncements(){
           </div>
 
           <div class="announcementText">
-            ${escapeParentHtml(message).replace(/\n/g,"<br>")}
+            ${renderAnnouncementText(message)}
           </div>
         </div>
       `);
