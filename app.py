@@ -819,7 +819,7 @@ def parent_events(player_id: int | None = Query(default=None), authorization: st
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT e.id,e.title,e.event_date,e.location,e.meal_price,
-                       e.status,e.event_type,e.survey_enabled,e.meal_enabled,e.response_deadline,e.meet_time,e.meet_time_tbd
+                       e.status,e.event_type,e.survey_enabled,e.response_deadline,e.meet_time,e.meet_time_tbd
                 FROM events e
                 WHERE e.id IN (
                     SELECT ep.event_id
@@ -865,9 +865,7 @@ def parent_event_attendance_summary(event_id: int, authorization: str | None = H
 
             cur.execute("""
                 SELECT p.id,p.name,p.team,p.number,
-                       a.attendance_status,a.practice_duration,a.attendance_note,a.leave_reason,
-                       COALESCE(a.player_meals,0) AS player_meals,
-                       COALESCE(a.parent_meals,0) AS parent_meals
+                       a.attendance_status,a.practice_duration,a.attendance_note,a.leave_reason
                 FROM event_players ep
                 JOIN players p ON p.id=ep.player_id
                 LEFT JOIN attendance a
@@ -912,8 +910,8 @@ class AttendanceIn(BaseModel):
     leave_reason: str = ""
     practice_duration: str = "full"
     attendance_note: str = ""
-    player_meals: int | None = Field(default=None, ge=0, le=100)
-    parent_meals: int | None = Field(default=None, ge=0, le=100)
+    player_meals: int | None = None
+    parent_meals: int | None = None
     expected_version: int = Field(ge=0)
 
 
@@ -1054,8 +1052,8 @@ class EventIn(BaseModel):
     title: NonBlank
     event_date: date
     location: NonBlank
-    meal_enabled: bool = False
-    meal_price: int = Field(default=0, ge=0)
+    meal_enabled: bool = True
+    meal_price: int = 0
     event_type: str = "practice"
     survey_enabled: bool = True
     response_deadline: date | None = None
@@ -1581,6 +1579,53 @@ def update_event(event_id: int, body: EventUpdateIn, authorization: str | None =
     return event
 
 
+class AdminAttendanceUpdateIn(BaseModel):
+    player_id: int
+    attendance_status: str | None = None
+    expected_version: int = Field(ge=0)
+
+
+@app.put("/api/admin/events/{event_id}/attendance")
+def admin_update_attendance(event_id: int, body: AdminAttendanceUpdateIn,
+                            authorization: str | None = Header(default=None)):
+    require_admin(authorization)
+    if body.attendance_status not in {None, "attend", "leave", "maybe"}:
+        raise HTTPException(422, "出席狀態錯誤")
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id,survey_enabled FROM events WHERE id=%s FOR UPDATE", (event_id,))
+        event = cur.fetchone()
+        if not event:
+            raise HTTPException(404, "找不到活動")
+        if not event["survey_enabled"]:
+            raise HTTPException(400, "此活動未開啟出席調查")
+        cur.execute("SELECT 1 FROM event_players WHERE event_id=%s AND player_id=%s",
+                    (event_id, body.player_id))
+        if not cur.fetchone():
+            raise HTTPException(404, "球員不在此活動名單中")
+        cur.execute("SELECT * FROM attendance WHERE event_id=%s AND player_id=%s FOR UPDATE",
+                    (event_id, body.player_id))
+        old = cur.fetchone()
+        if body.expected_version != (old["version"] if old else 0):
+            raise HTTPException(409, "出席資料已被其他人更新，請重新載入")
+        if body.attendance_status is None:
+            cur.execute("DELETE FROM attendance WHERE event_id=%s AND player_id=%s",
+                        (event_id, body.player_id))
+        elif old:
+            # Preserve meal counts and existing notes; only update attendance status.
+            cur.execute("""UPDATE attendance SET attendance_status=%s,version=version+1,
+                           updated_at=NOW(),updated_by_parent_id=NULL
+                           WHERE event_id=%s AND player_id=%s""",
+                        (body.attendance_status,event_id,body.player_id))
+        else:
+            cur.execute("""INSERT INTO attendance
+                        (event_id,player_id,attendance_status,leave_reason,
+                         practice_duration,attendance_note,player_meals,parent_meals,
+                         updated_by_parent_id)
+                        VALUES (%s,%s,%s,'','full','',0,0,NULL)""",
+                        (event_id,body.player_id,body.attendance_status))
+    return {"ok": True}
+
+
 @app.get("/api/admin/events/{event_id}")
 def admin_event_detail(event_id: int, authorization: str | None = Header(default=None)):
     require_admin(authorization)
@@ -1592,7 +1637,7 @@ def admin_event_detail(event_id: int, authorization: str | None = Header(default
             event["meet_time"]=normalize_time_value(event.get("meet_time"))
             cur.execute("""
                 SELECT p.id,p.name,p.team,p.number,a.attendance_status,a.leave_reason,
-                       a.practice_duration,a.attendance_note,
+                       a.practice_duration,a.attendance_note,COALESCE(a.version,0) version,
                        COALESCE(a.player_meals,0) player_meals,COALESCE(a.parent_meals,0) parent_meals
                 FROM event_players ep JOIN players p ON p.id=ep.player_id
                 LEFT JOIN attendance a ON a.event_id=ep.event_id AND a.player_id=ep.player_id
@@ -1640,24 +1685,24 @@ def export_payments_excel(title: str | None = Query(default=None), amount: int |
     where_sql=(" WHERE "+" AND ".join(conditions)) if conditions else ""
     with db() as conn:
         with conn.cursor() as cur:
-            cur.execute(f"""SELECT p.name player_name,p.team,p.number,pay.title,pay.amount,pay.due_date::text,pay.status,
+            cur.execute(f"""SELECT p.name player_name,p.team,pay.title,pay.amount,pay.due_date::text,pay.status,
                 pay.note,pay.payment_method,pay.transfer_date::text,pay.transfer_account_last5
                 FROM payments pay JOIN players p ON p.id=pay.player_id {where_sql}
                 ORDER BY pay.title,pay.due_date NULLS LAST,p.team,p.name""",tuple(params))
             rows=cur.fetchall()
     wb=Workbook(); ws=wb.active; ws.title="繳費明細"
-    ws.append(["繳費項目","背號","球員","組別","金額","繳費期限","狀態","繳費方式","繳交/轉帳日期","帳號後五碼","備註"])
+    ws.append(["繳費項目","球員","組別","金額","繳費期限","狀態","繳費方式","繳交/轉帳日期","帳號後五碼","備註"])
     for c in ws[1]: c.font=Font(bold=True); c.alignment=Alignment(horizontal="center")
     st={"paid":"已繳","pending":"待確認","unpaid":"未繳"}; mt={"cash":"現場繳交","transfer":"轉帳匯款"}
     for r in rows:
-        ws.append([r["title"],r["number"] or "",r["player_name"],r["team"],r["amount"],r["due_date"] or "",st.get(r["status"],r["status"]),
+        ws.append([r["title"],r["player_name"],r["team"],r["amount"],r["due_date"] or "",st.get(r["status"],r["status"]),
             mt.get(r["payment_method"],""),r["transfer_date"] or "",
             r["transfer_account_last5"] if r["payment_method"]=="transfer" else "",r["note"] or ""])
     for row in ws.iter_rows(min_row=2):
         for cell in row:
             if isinstance(cell.value, str):
                 cell.data_type = "s"
-    for i,w in enumerate([24,8,14,10,12,14,12,14,18,14,30],1): ws.column_dimensions[chr(64+i)].width=w
+    for i,w in enumerate([24,14,10,12,14,12,14,18,14,30],1): ws.column_dimensions[chr(64+i)].width=w
     ws.freeze_panes="A2"; ws.auto_filter.ref=ws.dimensions
     bio=BytesIO(); wb.save(bio); bio.seek(0)
     filename="payments.xlsx" if title is None else f"{title}_繳費明細.xlsx"
